@@ -1,20 +1,58 @@
 import { useEffect, useMemo, useState } from "react";
-import { getData, postData, putData, deleteData } from "../services/api";
+import { getData, postData } from "../services/api";
+
+const cardStyle = {
+  background: "rgba(255,255,255,0.92)",
+  borderRadius: 24,
+  border: "1px solid rgba(148,163,184,0.14)",
+  boxShadow: "0 18px 40px rgba(15,23,42,0.06)",
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: "14px 16px",
+  borderRadius: 14,
+  border: "1px solid #dbe3ef",
+  outline: "none",
+  fontSize: 15,
+  background: "#fff",
+  boxSizing: "border-box",
+};
+
+const labelStyle = {
+  fontSize: 14,
+  fontWeight: 600,
+  color: "#334155",
+  marginBottom: 8,
+  display: "block",
+};
+
+const primaryButton = {
+  padding: "14px 18px",
+  borderRadius: 14,
+  border: "none",
+  background: "linear-gradient(135deg, #2563eb, #7c3aed)",
+  color: "#fff",
+  fontWeight: 700,
+  fontSize: 15,
+  cursor: "pointer",
+  boxShadow: "0 14px 30px rgba(37,99,235,0.22)",
+};
 
 export default function Users() {
+  const user = JSON.parse(localStorage.getItem("user") || "{}");
+  const isAdmin = user?.role === "admin";
+
   const [users, setUsers] = useState([]);
-  const [editingId, setEditingId] = useState(null);
-  const [search, setSearch] = useState("");
-  const [roleFilter, setRoleFilter] = useState("all");
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
 
   const [form, setForm] = useState({
     full_name: "",
     email: "",
     password: "",
     role: "user",
-    contact: "",
-    room_no: "",
   });
 
   useEffect(() => {
@@ -25,305 +63,351 @@ export default function Users() {
     try {
       setLoading(true);
       const res = await getData("/users");
-      setUsers(res || []);
+      setUsers(Array.isArray(res) ? res : []);
     } catch (error) {
       console.error("Failed to load users", error);
+      alert(error?.response?.data?.message || "Failed to load users");
     } finally {
       setLoading(false);
     }
   };
 
-  const resetForm = () => {
-    setEditingId(null);
-    setForm({
-      full_name: "",
-      email: "",
-      password: "",
-      role: "user",
-      contact: "",
-      room_no: "",
-    });
-  };
-
-  const submitUser = async (e) => {
+  const createUser = async (e) => {
     e.preventDefault();
 
-    try {
-      if (editingId) {
-        const payload = { ...form };
-
-        if (!payload.password) {
-          delete payload.password;
-        }
-
-        await putData(`/users/${editingId}`, payload);
-      } else {
-        await postData("/users", form);
-      }
-
-      resetForm();
-      loadUsers();
-    } catch (error) {
-      console.error("Failed to save user", error);
-      alert(error?.response?.data?.message || "Failed to save user");
+    if (!form.full_name || !form.email || !form.password || !form.role) {
+      alert("Please fill all fields.");
+      return;
     }
-  };
-
-  const editUser = (user) => {
-    setEditingId(user.id);
-    setForm({
-      full_name: user.full_name || "",
-      email: user.email || "",
-      password: "",
-      role: user.role || "user",
-      contact: user.contact || "",
-      room_no: user.room_no || "",
-    });
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  const removeUser = async (id) => {
-    const ok = window.confirm("Are you sure you want to delete this user?");
-    if (!ok) return;
 
     try {
-      await deleteData(`/users/${id}`);
-      loadUsers();
+      setSaving(true);
+      await postData("/users", form);
+
+      setForm({
+        full_name: "",
+        email: "",
+        password: "",
+        role: "user",
+      });
+
+      await loadUsers();
+      alert("User created successfully");
     } catch (error) {
-      console.error("Failed to delete user", error);
-      alert(error?.response?.data?.message || "Failed to delete user");
+      console.error("Failed to create user", error);
+      alert(error?.response?.data?.message || "Failed to create user");
+    } finally {
+      setSaving(false);
     }
   };
 
   const filteredUsers = useMemo(() => {
-    return users.filter((u) => {
-      const matchesSearch = `${u.full_name} ${u.email} ${u.role} ${u.contact || ""} ${u.room_no || ""}`
-        .toLowerCase()
-        .includes(search.toLowerCase());
-
-      const matchesRole =
-        roleFilter === "all" ? true : u.role?.toLowerCase() === roleFilter;
-
-      return matchesSearch && matchesRole;
+    return users.filter((item) => {
+      const text = `${item.full_name || ""} ${item.email || ""} ${item.role || ""}`
+        .toLowerCase();
+      return text.includes(search.toLowerCase());
     });
-  }, [users, search, roleFilter]);
+  }, [users, search]);
 
-  const totalAdmins = users.filter((u) => u.role === "admin").length;
-  const totalUsers = users.filter((u) => u.role === "user").length;
+  const totalUsers = users.length;
+  const adminCount = users.filter((u) => u.role === "admin").length;
+  const normalUsers = users.filter((u) => u.role === "user").length;
+
+  if (!isAdmin) {
+    return (
+      <div style={{ ...cardStyle, padding: 28 }}>
+        <h2 style={{ marginTop: 0, color: "#0f172a" }}>Users Module</h2>
+        <p style={{ color: "#64748b", marginBottom: 0 }}>
+          Only admin can access the user management module.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="page-grid">
-      <section className="glass-card">
-        <div className="hero-strip">
+    <div style={{ display: "grid", gap: 22 }}>
+      <div
+        style={{
+          ...cardStyle,
+          padding: 28,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 16,
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <h2 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>
+            User Management
+          </h2>
+          <p style={{ color: "#64748b", marginTop: 10, marginBottom: 0 }}>
+            Create and manage admin and user accounts for the mess system.
+          </p>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div
+            style={{
+              padding: "10px 14px",
+              borderRadius: "999px",
+              background: "rgba(59,130,246,0.10)",
+              color: "#2563eb",
+              fontWeight: 700,
+              fontSize: 14,
+            }}
+          >
+            Total: {totalUsers}
+          </div>
+          <div
+            style={{
+              padding: "10px 14px",
+              borderRadius: "999px",
+              background: "rgba(16,185,129,0.10)",
+              color: "#059669",
+              fontWeight: 700,
+              fontSize: 14,
+            }}
+          >
+            Users: {normalUsers}
+          </div>
+          <div
+            style={{
+              padding: "10px 14px",
+              borderRadius: "999px",
+              background: "rgba(124,58,237,0.10)",
+              color: "#7c3aed",
+              fontWeight: 700,
+              fontSize: 14,
+            }}
+          >
+            Admins: {adminCount}
+          </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1.1fr 1.4fr",
+          gap: 22,
+        }}
+      >
+        <form
+          onSubmit={createUser}
+          style={{
+            ...cardStyle,
+            padding: 28,
+            display: "grid",
+            gap: 16,
+          }}
+        >
           <div>
-            <h2 className="page-title">User Management</h2>
-            <p className="page-subtitle">
-              Create, update, filter, and manage admin and student accounts from one place.
+            <h3 style={{ marginTop: 0, marginBottom: 6, fontSize: 22, color: "#0f172a" }}>
+              Create User
+            </h3>
+            <p style={{ margin: 0, color: "#64748b" }}>
+              Add a new system user or admin account.
             </p>
           </div>
 
-          <div className="hero-kpis">
-            <div className="kpi-pill">Total Accounts: {users.length}</div>
-            <div className="kpi-pill">Admins: {totalAdmins}</div>
-            <div className="kpi-pill">Users: {totalUsers}</div>
-          </div>
-        </div>
-      </section>
-
-      <section className="content-two">
-        <form className="glass-card form-grid" onSubmit={submitUser}>
-          <h3 className="section-title">
-            {editingId ? "Update User" : "Create New User"}
-          </h3>
-
-          <input
-            className="input"
-            placeholder="Full name"
-            value={form.full_name}
-            onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-            required
-          />
-
-          <div className="form-row">
+          <div>
+            <label style={labelStyle}>Full Name</label>
             <input
-              className="input"
+              style={inputStyle}
+              placeholder="Enter full name"
+              value={form.full_name}
+              onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Email</label>
+            <input
+              style={inputStyle}
               type="email"
-              placeholder="Email address"
+              placeholder="Enter email"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
-              required
-            />
-
-            <input
-              className="input"
-              type="password"
-              placeholder={editingId ? "New password (optional)" : "Password"}
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              required={!editingId}
             />
           </div>
 
-          <div className="form-row-3">
+          <div>
+            <label style={labelStyle}>Password</label>
+            <input
+              style={inputStyle}
+              type="password"
+              placeholder="Enter password"
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Role</label>
             <select
-              className="select"
+              style={inputStyle}
               value={form.role}
               onChange={(e) => setForm({ ...form, role: e.target.value })}
             >
               <option value="user">User</option>
               <option value="admin">Admin</option>
             </select>
-
-            <input
-              className="input"
-              placeholder="Contact number"
-              value={form.contact}
-              onChange={(e) => setForm({ ...form, contact: e.target.value })}
-            />
-
-            <input
-              className="input"
-              placeholder="Room number"
-              value={form.room_no}
-              onChange={(e) => setForm({ ...form, room_no: e.target.value })}
-            />
           </div>
 
-          <div className="button-group">
-            <button className="button button-primary" type="submit">
-              {editingId ? "Update User" : "Create User"}
-            </button>
-
-            <button
-              className="button button-secondary"
-              type="button"
-              onClick={resetForm}
-            >
-              Reset
-            </button>
-          </div>
+          <button type="submit" style={primaryButton} disabled={saving}>
+            {saving ? "Creating..." : "Create User"}
+          </button>
         </form>
 
-        <section className="glass-card">
-          <h3 className="section-title">Quick Insights</h3>
-
-          <div className="stats-grid">
-            <div className="stat-card">
-              <div className="stat-label">All Accounts</div>
-              <div className="stat-value">{users.length}</div>
-              <div className="stat-trend">System users</div>
+        <div
+          style={{
+            ...cardStyle,
+            padding: 22,
+            display: "grid",
+            gap: 16,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 14,
+              flexWrap: "wrap",
+            }}
+          >
+            <div>
+              <h3 style={{ margin: 0, color: "#0f172a", fontSize: 22 }}>Users List</h3>
+              <p style={{ margin: "8px 0 0", color: "#64748b" }}>
+                Search and review all registered accounts.
+              </p>
             </div>
 
-            <div className="stat-card">
-              <div className="stat-label">Admin Accounts</div>
-              <div className="stat-value">{totalAdmins}</div>
-              <div className="stat-trend">Access control</div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-label">Student Users</div>
-              <div className="stat-value">{totalUsers}</div>
-              <div className="stat-trend">Mess members</div>
+            <div
+              style={{
+                padding: "10px 14px",
+                borderRadius: "999px",
+                background: "rgba(16,185,129,0.12)",
+                color: "#059669",
+                fontWeight: 700,
+                fontSize: 14,
+              }}
+            >
+              Showing: {filteredUsers.length}
             </div>
           </div>
-        </section>
-      </section>
 
-      <section className="glass-card">
-        <div className="search-row">
           <input
-            className="input"
-            placeholder="Search by name, email, role, contact, room..."
+            style={inputStyle}
+            placeholder="Search by name, email, role..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
 
-          <select
-            className="select"
-            value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
-            style={{ maxWidth: 180 }}
-          >
-            <option value="all">All Roles</option>
-            <option value="admin">Admin</option>
-            <option value="user">User</option>
-          </select>
-        </div>
-      </section>
-
-      <section className="glass-card">
-        <h3 className="section-title">Users Directory</h3>
-
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Contact</th>
-                <th>Room</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan="6">
-                    <div className="empty-state">Loading users...</div>
-                  </td>
-                </tr>
-              ) : filteredUsers.length ? (
-                filteredUsers.map((u) => (
-                  <tr key={u.id}>
-                    <td>
-                      <strong>{u.full_name}</strong>
-                    </td>
-                    <td>{u.email}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          u.role === "admin" ? "badge-info" : "badge-success"
-                        }`}
-                      >
-                        {u.role}
-                      </span>
-                    </td>
-                    <td>{u.contact || "-"}</td>
-                    <td>{u.room_no || "-"}</td>
-                    <td>
-                      <div className="button-group">
-                        <button
-                          className="button button-secondary"
-                          type="button"
-                          onClick={() => editUser(u)}
-                        >
-                          Edit
-                        </button>
-
-                        <button
-                          className="button button-danger"
-                          type="button"
-                          onClick={() => removeUser(u.id)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
+          {loading ? (
+            <div
+              style={{
+                padding: 24,
+                textAlign: "center",
+                color: "#64748b",
+                border: "1px dashed #d9e2ef",
+                borderRadius: 18,
+              }}
+            >
+              Loading users...
+            </div>
+          ) : !filteredUsers.length ? (
+            <div
+              style={{
+                padding: 28,
+                textAlign: "center",
+                color: "#64748b",
+                border: "1px dashed #d9e2ef",
+                borderRadius: 18,
+                background: "rgba(248,250,252,0.8)",
+              }}
+            >
+              No users found.
+            </div>
+          ) : (
+            <div
+              style={{
+                overflowX: "auto",
+                border: "1px solid #edf2f7",
+                borderRadius: 18,
+              }}
+            >
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  minWidth: 700,
+                  background: "#fff",
+                }}
+              >
+                <thead>
+                  <tr style={{ background: "rgba(248,250,252,0.9)" }}>
+                    <th style={thStyle}>Name</th>
+                    <th style={thStyle}>Email</th>
+                    <th style={thStyle}>Role</th>
+                    <th style={thStyle}>Created</th>
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan="6">
-                    <div className="empty-state">No users found.</div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {filteredUsers.map((item, index) => (
+                    <tr
+                      key={item.id}
+                      style={{
+                        borderTop: "1px solid #eef2f7",
+                        background: index % 2 === 0 ? "#fff" : "#fcfdff",
+                      }}
+                    >
+                      <td style={tdStyle}>
+                        <strong>{item.full_name}</strong>
+                      </td>
+                      <td style={tdStyle}>{item.email}</td>
+                      <td style={tdStyle}>
+                        <span
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: "999px",
+                            fontSize: 13,
+                            fontWeight: 700,
+                            display: "inline-block",
+                            background:
+                              item.role === "admin"
+                                ? "rgba(124,58,237,0.12)"
+                                : "rgba(37,99,235,0.12)",
+                            color: item.role === "admin" ? "#7c3aed" : "#2563eb",
+                          }}
+                        >
+                          {item.role}
+                        </span>
+                      </td>
+                      <td style={tdStyle}>{item.created_at || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      </section>
+      </div>
     </div>
   );
 }
+
+const thStyle = {
+  textAlign: "left",
+  padding: "16px 18px",
+  color: "#64748b",
+  fontSize: 14,
+  fontWeight: 700,
+};
+
+const tdStyle = {
+  padding: "16px 18px",
+  color: "#0f172a",
+  verticalAlign: "top",
+};

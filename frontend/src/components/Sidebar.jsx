@@ -16,6 +16,7 @@ const adminLinks = [
   { to: "/reports", label: "Reports" },
   { to: "/inventory", label: "Inventory" },
   { to: "/users", label: "Users" },
+  { to: "/payment-approval", label: "Payment Approval" },
 ];
 
 export default function Sidebar() {

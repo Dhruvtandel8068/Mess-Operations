@@ -5,14 +5,20 @@ class Payment(db.Model):
     __tablename__ = "payments"
 
     id = db.Column(db.Integer, primary_key=True)
-    bill_id = db.Column(db.Integer, db.ForeignKey("bills.id", ondelete="CASCADE"), nullable=False)
-    mode = db.Column(db.String(20), nullable=False)
+    bill_id = db.Column(
+        db.Integer,
+        db.ForeignKey("bills.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    mode = db.Column(db.String(30), nullable=False, default="UPI")
     proof_filename = db.Column(db.String(255), nullable=True)
-    receipt_no = db.Column(db.String(60), nullable=True)
-    note = db.Column(db.String(255), nullable=True)
-    paid_at = db.Column(db.DateTime, server_default=db.func.now())
+    receipt_no = db.Column(db.String(120), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default="Pending")
+    admin_remark = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
 
-    bill = db.relationship("Bill", backref="payments")
+    bill = db.relationship("Bill", back_populates="payments")
 
     def to_dict(self):
         return {
@@ -23,5 +29,7 @@ class Payment(db.Model):
             "proof_url": f"/api/uploads/{self.proof_filename}" if self.proof_filename else None,
             "receipt_no": self.receipt_no,
             "note": self.note,
-            "paid_at": str(self.paid_at) if self.paid_at else None,
+            "status": self.status,
+            "admin_remark": self.admin_remark,
+            "created_at": str(self.created_at) if self.created_at else None,
         }

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { getData, postData } from "../services/api";
-import { QRCodeCanvas } from "qrcode.react";
 import { showSuccess, showError } from "../utils/toast";
+import paymentQR from "../assets/payment-qr.jpeg";
 
 export default function Billing() {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const isAdmin = user?.role === "admin";
 
   const [bills, setBills] = useState([]);
+  const [users, setUsers] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(false);
@@ -16,21 +17,28 @@ export default function Billing() {
   const [transactionId, setTransactionId] = useState("");
   const [paying, setPaying] = useState(false);
 
+  const [generationSummary, setGenerationSummary] = useState(null);
+
   const [generateForm, setGenerateForm] = useState({
     month: new Date().getMonth() + 1,
     year: new Date().getFullYear(),
     per_meal_cost: 50,
+    billing_type: "all",
+    user_id: "",
   });
 
   useEffect(() => {
     loadBills();
+    if (isAdmin) {
+      loadUsers();
+    }
   }, []);
 
   const loadBills = async () => {
     try {
       setLoading(true);
       const res = await getData("/billing/");
-      setBills(res || []);
+      setBills(Array.isArray(res) ? res : []);
     } catch (error) {
       console.error("Failed to load bills", error);
       showError(error?.response?.data?.message || "Failed to load bills");
@@ -39,35 +47,48 @@ export default function Billing() {
     }
   };
 
+  const loadUsers = async () => {
+    try {
+      const res = await getData("/users");
+      setUsers(Array.isArray(res) ? res : []);
+    } catch (error) {
+      console.error("Failed to load users", error);
+      showError(error?.response?.data?.message || "Failed to load users");
+    }
+  };
+
   const generateBills = async (e) => {
     e.preventDefault();
 
+    if (
+      generateForm.billing_type === "single" &&
+      (!generateForm.user_id || generateForm.user_id === "")
+    ) {
+      showError("Please select a user");
+      return;
+    }
+
     try {
-      await postData("/billing/generate", {
+      const payload = {
         month: Number(generateForm.month),
         year: Number(generateForm.year),
         per_meal_cost: Number(generateForm.per_meal_cost),
-      });
+        billing_type: generateForm.billing_type,
+      };
 
-      showSuccess("Bills generated successfully");
-      loadBills();
+      if (generateForm.billing_type === "single") {
+        payload.user_id = Number(generateForm.user_id);
+      }
+
+      const res = await postData("/billing/generate", payload);
+
+      showSuccess(res?.message || "Bills generated successfully");
+      setGenerationSummary(res?.summary || null);
+      await loadBills();
     } catch (error) {
       console.error("Failed to generate bills", error);
       showError(error?.response?.data?.message || "Failed to generate bills");
     }
-  };
-
-  const getUpiPaymentString = (bill) => {
-    if (!bill) return "";
-
-    const upiId = "dhruvtandel8068@oksbi"; // change to your real UPI ID
-    const payeeName = "Mess Management";
-    const amount = bill.total_amount || 0;
-    const note = `Mess Bill ${bill.period}`;
-
-    return `upi://pay?pa=${upiId}&pn=${encodeURIComponent(
-      payeeName
-    )}&am=${amount}&cu=INR&tn=${encodeURIComponent(note)}`;
   };
 
   const openPaymentBox = (bill) => {
@@ -93,7 +114,7 @@ export default function Billing() {
 
       showSuccess("Payment submitted successfully");
       closePaymentBox();
-      loadBills();
+      await loadBills();
     } catch (error) {
       console.error("Failed to pay bill", error);
       showError(error?.response?.data?.message || "Failed to pay bill");
@@ -120,10 +141,20 @@ export default function Billing() {
   const totalBills = bills.length;
   const paidBills = bills.filter((bill) => bill.status === "Paid").length;
   const unpaidBills = bills.filter((bill) => bill.status === "Unpaid").length;
+  const pendingBills = bills.filter(
+    (bill) => bill.status === "Pending Approval"
+  ).length;
+
   const totalAmount = bills.reduce(
     (sum, bill) => sum + Number(bill.total_amount || 0),
     0
   );
+
+  const selectedUserName =
+    generateForm.billing_type === "single"
+      ? users.find((u) => Number(u.id) === Number(generateForm.user_id))
+          ?.full_name || "No user selected"
+      : "All users";
 
   return (
     <>
@@ -133,15 +164,14 @@ export default function Billing() {
             <div>
               <h2 className="page-title">Billing Management</h2>
               <p className="page-subtitle">
-                Generate monthly bills automatically, track payments, and let users
-                pay with QR code.
+                Generate monthly bills, track payments, and manage billing summary.
               </p>
             </div>
 
             <div className="hero-kpis">
               <div className="kpi-pill">Total Bills: {totalBills}</div>
               <div className="kpi-pill">Paid: {paidBills}</div>
-              <div className="kpi-pill">Unpaid: {unpaidBills}</div>
+              <div className="kpi-pill">Pending: {pendingBills}</div>
             </div>
           </div>
         </section>
@@ -189,9 +219,62 @@ export default function Billing() {
                 required
               />
 
+              <div className="form-row">
+                <select
+                  className="select"
+                  value={generateForm.billing_type}
+                  onChange={(e) =>
+                    setGenerateForm({
+                      ...generateForm,
+                      billing_type: e.target.value,
+                      user_id: "",
+                    })
+                  }
+                >
+                  <option value="all">Generate for All Users</option>
+                  <option value="single">Generate for One User</option>
+                </select>
+
+                {generateForm.billing_type === "single" && (
+                  <select
+                    className="select"
+                    value={generateForm.user_id}
+                    onChange={(e) =>
+                      setGenerateForm({
+                        ...generateForm,
+                        user_id: e.target.value,
+                      })
+                    }
+                    required
+                  >
+                    <option value="">Select User</option>
+                    {users.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.full_name} ({u.email})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div
+                style={{
+                  padding: 12,
+                  borderRadius: 12,
+                  background: "rgba(37, 99, 235, 0.08)",
+                  border: "1px solid rgba(37, 99, 235, 0.15)",
+                  color: "#0f172a",
+                  fontWeight: 600,
+                }}
+              >
+                Bill will be created for: {selectedUserName}
+              </div>
+
               <div className="button-group">
                 <button className="button button-primary" type="submit">
-                  Generate Bills
+                  {generateForm.billing_type === "single"
+                    ? "Generate Selected User Bill"
+                    : "Generate All Bills"}
                 </button>
               </div>
             </form>
@@ -214,13 +297,76 @@ export default function Billing() {
               </div>
 
               <div className="stat-card">
-                <div className="stat-label">Pending Bills</div>
-                <div className="stat-value">{unpaidBills}</div>
-                <div className="stat-trend">Awaiting payment</div>
+                <div className="stat-label">Pending Approval</div>
+                <div className="stat-value">{pendingBills}</div>
+                <div className="stat-trend">Waiting for admin approval</div>
               </div>
             </div>
           </section>
         </section>
+
+        {generationSummary && (
+          <section className="glass-card">
+            <h3 className="section-title">Generation Summary</h3>
+
+            <div className="stats-grid" style={{ marginBottom: 18 }}>
+              <div className="stat-card">
+                <div className="stat-label">Period</div>
+                <div className="stat-value">{generationSummary.period}</div>
+                <div className="stat-trend">Billing month</div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-label">Created</div>
+                <div className="stat-value">{generationSummary.created_count}</div>
+                <div className="stat-trend">New bills added</div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-label">Updated</div>
+                <div className="stat-value">{generationSummary.updated_count}</div>
+                <div className="stat-trend">Existing bills updated</div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-label">Total Meals</div>
+                <div className="stat-value">{generationSummary.total_generated_meals}</div>
+                <div className="stat-trend">Meals counted</div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-label">Total Amount</div>
+                <div className="stat-value">
+                  ₹ {Number(generationSummary.total_generated_amount || 0).toFixed(2)}
+                </div>
+                <div className="stat-trend">Bill collection total</div>
+              </div>
+            </div>
+
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Email</th>
+                    <th>Total Meals</th>
+                    <th>Total Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {generationSummary.generated_users?.map((item) => (
+                    <tr key={item.user_id}>
+                      <td><strong>{item.user_name}</strong></td>
+                      <td>{item.email}</td>
+                      <td>{item.total_meals}</td>
+                      <td>₹ {Number(item.total_amount || 0).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
 
         <section className="glass-card">
           <div className="search-row">
@@ -240,6 +386,7 @@ export default function Billing() {
               <option value="all">All Status</option>
               <option value="paid">Paid</option>
               <option value="unpaid">Unpaid</option>
+              <option value="pending approval">Pending Approval</option>
             </select>
           </div>
         </section>
@@ -283,6 +430,8 @@ export default function Billing() {
                           className={`badge ${
                             bill.status === "Paid"
                               ? "badge-success"
+                              : bill.status === "Pending Approval"
+                              ? "badge-info"
                               : "badge-danger"
                           }`}
                         >
@@ -290,7 +439,7 @@ export default function Billing() {
                         </span>
                       </td>
                       <td>
-                        {!isAdmin && bill.status !== "Paid" ? (
+                        {!isAdmin && bill.status === "Unpaid" ? (
                           <button
                             className="button button-primary"
                             type="button"
@@ -300,6 +449,8 @@ export default function Billing() {
                           </button>
                         ) : bill.status === "Paid" ? (
                           <span className="badge badge-success">Paid</span>
+                        ) : bill.status === "Pending Approval" ? (
+                          <span className="badge badge-info">Pending Approval</span>
                         ) : (
                           <span className="badge badge-info">Admin View</span>
                         )}
@@ -337,7 +488,7 @@ export default function Billing() {
             onClick={(e) => e.stopPropagation()}
             style={{
               width: "100%",
-              maxWidth: 560,
+              maxWidth: 580,
               background: "var(--panel-strong, #fff)",
               borderRadius: 24,
               padding: 28,
@@ -353,12 +504,12 @@ export default function Billing() {
             </h3>
 
             <p className="page-subtitle" style={{ margin: 0 }}>
-              Scan this QR code using Google Pay, PhonePe, Paytm, or any UPI app.
+              Scan this QR using Google Pay, PhonePe, Paytm, or any UPI app.
             </p>
 
             <div
               style={{
-                padding: 18,
+                padding: 16,
                 borderRadius: 20,
                 background: "#fff",
                 border: "1px solid rgba(148, 163, 184, 0.18)",
@@ -366,9 +517,15 @@ export default function Billing() {
                 width: "fit-content",
               }}
             >
-              <QRCodeCanvas
-                value={getUpiPaymentString(selectedBill)}
-                size={220}
+              <img
+                src={paymentQR}
+                alt="Payment QR"
+                style={{
+                  width: 260,
+                  maxWidth: "100%",
+                  borderRadius: 12,
+                  display: "block",
+                }}
               />
             </div>
 
@@ -376,7 +533,7 @@ export default function Billing() {
               <p><strong>User:</strong> {selectedBill.user_name}</p>
               <p><strong>Period:</strong> {selectedBill.period}</p>
               <p><strong>Amount:</strong> ₹ {selectedBill.total_amount}</p>
-              <p><strong>UPI ID:</strong> dhruvtandel8068@oksbi</p>
+              <p><strong>Payment Type:</strong> UPI QR Payment</p>
             </div>
 
             <input

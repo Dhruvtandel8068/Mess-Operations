@@ -5,6 +5,7 @@ import Dashboard from "../pages/Dashboard";
 import Menu from "../pages/Menu";
 import Attendance from "../pages/Attendance";
 import Billing from "../pages/Billing";
+import PaymentApproval from "../pages/PaymentApproval";
 import Complaints from "../pages/Complaints";
 import Notifications from "../pages/Notifications";
 import Profile from "../pages/Profile";
@@ -15,6 +16,7 @@ import Users from "../pages/Users";
 import Layout from "../components/Layout";
 import ProtectedRoute from "../components/ProtectedRoute";
 import ChangePassword from "../pages/ChangePassword";
+
 export default function AppRoutes() {
   const token = localStorage.getItem("token");
   const user = JSON.parse(localStorage.getItem("user") || "null");
@@ -49,7 +51,10 @@ export default function AppRoutes() {
           <Route path="/expenses" element={<Expenses />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/inventory" element={<Inventory />} />
-          {user?.role === "admin" && <Route path="/users" element={<Users />} />}
+          <Route path="/users" element={<Users />} />
+          {user?.role === "admin" && (
+            <Route path="/payment-approval" element={<PaymentApproval />} />
+          )}
         </Route>
       </Route>
 

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from flask_jwt_extended import create_access_token
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from app.models.user import User
 from app.utils.db import db
@@ -59,29 +59,42 @@ def login():
     return jsonify({"message": "Login successful", "token": token, "user": user.to_dict()})
 
 
-@auth_bp.route("/change-password", methods=["POST"])
+@auth_bp.route("/change-password", methods=["PUT"])
 @jwt_required()
 def change_password():
-    data = request.get_json() or {}
+    try:
+        user_id = int(get_jwt_identity())
+        user = User.query.get(user_id)
 
-    current_password = data.get("current_password")
-    new_password = data.get("new_password")
+        if not user:
+            return jsonify({"message": "User not found"}), 404
 
-    if not current_password or not new_password:
-        return jsonify({"message": "Current password and new password are required"}), 400
+        data = request.get_json() or {}
+        old_password = (data.get("old_password") or "").strip()
+        new_password = (data.get("new_password") or "").strip()
+        confirm_password = (data.get("confirm_password") or "").strip()
 
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
+        if not old_password or not new_password or not confirm_password:
+            return jsonify({"message": "All password fields are required"}), 400
 
-    if not user:
-        return jsonify({"message": "User not found"}), 404
+        if not check_password_hash(user.password_hash, old_password):
+            return jsonify({"message": "Old password is incorrect"}), 400
 
-    if not check_password_hash(user.password, current_password):
-        return jsonify({"message": "Current password is incorrect"}), 400
+        if new_password != confirm_password:
+            return jsonify({"message": "New password and confirm password do not match"}), 400
 
-    user.password = generate_password_hash(new_password)
-    db.session.commit()
+        if len(new_password) < 6:
+            return jsonify({"message": "New password must be at least 6 characters"}), 400
 
-    return jsonify({"message": "Password changed successfully"}), 200
+        user.password_hash = generate_password_hash(new_password)
+        user.must_change_password = False
 
+        db.session.commit()
+
+        return jsonify({"message": "Password changed successfully"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print("CHANGE PASSWORD ERROR:", str(e))
+        return jsonify({"message": f"Failed to change password: {str(e)}"}), 500
     return _inner()

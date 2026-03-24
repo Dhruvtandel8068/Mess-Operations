@@ -1,55 +1,46 @@
 import { useState } from "react";
-import { postData } from "../services/api";
+import { putData } from "../services/api";
 import { showSuccess, showError } from "../utils/toast";
 
 export default function ChangePassword() {
-  const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
-    current_password: "",
+    old_password: "",
     new_password: "",
     confirm_password: "",
   });
-
-  const handleChange = (e) => {
-    setForm((prev) => ({
-      ...prev,
-      [e.target.name]: e.target.value,
-    }));
-  };
+  const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!form.old_password || !form.new_password || !form.confirm_password) {
+      showError("Please fill all fields");
+      return;
+    }
 
     if (form.new_password !== form.confirm_password) {
       showError("New password and confirm password do not match");
       return;
     }
 
-    if (form.new_password.length < 6) {
-      showError("New password must be at least 6 characters");
-      return;
-    }
-
     try {
-      setLoading(true);
+      setSaving(true);
 
-      await postData("/auth/change-password", {
-        current_password: form.current_password,
-        new_password: form.new_password,
-      });
-
-      showSuccess("Password changed successfully");
+      const res = await putData("/auth/change-password", form);
+      showSuccess(res?.message || "Password changed successfully");
 
       setForm({
-        current_password: "",
+        old_password: "",
         new_password: "",
         confirm_password: "",
       });
     } catch (error) {
-      console.error("Change password failed", error);
-      showError(error?.response?.data?.message || "Failed to change password");
+      console.error("Failed to change password", error);
+      showError(
+        error?.response?.data?.message || "Failed to change password"
+      );
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
@@ -63,7 +54,6 @@ export default function ChangePassword() {
               Keep your account secure by updating your password regularly.
             </p>
           </div>
-
           <div className="hero-kpis">
             <div className="kpi-pill">Security Settings</div>
           </div>
@@ -77,36 +67,36 @@ export default function ChangePassword() {
           <input
             className="input"
             type="password"
-            name="current_password"
-            placeholder="Current password"
-            value={form.current_password}
-            onChange={handleChange}
-            required
+            placeholder="Enter old password"
+            value={form.old_password}
+            onChange={(e) =>
+              setForm({ ...form, old_password: e.target.value })
+            }
           />
 
           <input
             className="input"
             type="password"
-            name="new_password"
-            placeholder="New password"
+            placeholder="Enter new password"
             value={form.new_password}
-            onChange={handleChange}
-            required
+            onChange={(e) =>
+              setForm({ ...form, new_password: e.target.value })
+            }
           />
 
           <input
             className="input"
             type="password"
-            name="confirm_password"
             placeholder="Confirm new password"
             value={form.confirm_password}
-            onChange={handleChange}
-            required
+            onChange={(e) =>
+              setForm({ ...form, confirm_password: e.target.value })
+            }
           />
 
           <div className="button-group">
-            <button className="button button-primary" type="submit" disabled={loading}>
-              {loading ? "Updating..." : "Change Password"}
+            <button className="button button-primary" type="submit" disabled={saving}>
+              {saving ? "Changing..." : "Change Password"}
             </button>
           </div>
         </form>
@@ -114,32 +104,26 @@ export default function ChangePassword() {
         <section className="glass-card">
           <h3 className="section-title">Password Tips</h3>
 
-          <div className="list-stack">
-            <div className="list-item">
-              <div>
-                <strong>Use a strong password</strong>
-                <div className="muted">
-                  Include uppercase, lowercase, numbers, and symbols.
-                </div>
-              </div>
+          <div style={{ display: "grid", gap: 18 }}>
+            <div>
+              <strong>Use a strong password</strong>
+              <p className="page-subtitle" style={{ marginTop: 6 }}>
+                Include uppercase, lowercase, numbers, and symbols.
+              </p>
             </div>
 
-            <div className="list-item">
-              <div>
-                <strong>Do not reuse old passwords</strong>
-                <div className="muted">
-                  Choose a fresh password that you do not use elsewhere.
-                </div>
-              </div>
+            <div>
+              <strong>Do not reuse old passwords</strong>
+              <p className="page-subtitle" style={{ marginTop: 6 }}>
+                Choose a fresh password that you do not use elsewhere.
+              </p>
             </div>
 
-            <div className="list-item">
-              <div>
-                <strong>Keep it private</strong>
-                <div className="muted">
-                  Never share your password with anyone.
-                </div>
-              </div>
+            <div>
+              <strong>Keep it private</strong>
+              <p className="page-subtitle" style={{ marginTop: 6 }}>
+                Never share your password with anyone.
+              </p>
             </div>
           </div>
         </section>

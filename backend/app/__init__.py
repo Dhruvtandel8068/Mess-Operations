@@ -44,6 +44,7 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
+    # Create upload folder
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
     CORS(
@@ -62,6 +63,7 @@ def create_app():
     db.init_app(app)
     jwt.init_app(app)
 
+    # Import routes here to avoid circular imports
     from app.routes.auth_routes import auth_bp
     from app.routes.user_routes import user_bp
     from app.routes.expense_routes import expense_bp
@@ -72,6 +74,7 @@ def create_app():
     from app.routes.notification_routes import notification_bp
     from app.routes.billing_routes import billing_bp
 
+    # Register blueprints
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(user_bp, url_prefix="/api")
     app.register_blueprint(expense_bp, url_prefix="/api/expenses")
@@ -86,6 +89,7 @@ def create_app():
     def uploaded_file(filename):
         return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
+    # Create tables
     with app.app_context():
         from app.models.attendance import Attendance
         from app.models.bill import Bill

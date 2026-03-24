@@ -5,7 +5,11 @@ class Bill(db.Model):
     __tablename__ = "bills"
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
+    )
     month = db.Column(db.Integer, nullable=True)
     year = db.Column(db.Integer, nullable=True)
     period = db.Column(db.String(30), nullable=True)
@@ -17,6 +21,12 @@ class Bill(db.Model):
     created_at = db.Column(db.DateTime, server_default=db.func.now())
 
     user = db.relationship("User", backref="bills")
+    payments = db.relationship(
+        "Payment",
+        back_populates="bill",
+        cascade="all, delete-orphan",
+        lazy=True
+    )
 
     def to_dict(self):
         return {
