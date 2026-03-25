@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { getData, postData } from "../services/api";
+import {
+  deleteData,
+  getData,
+  postData,
+  putData,
+} from "../services/api";
+import { showError, showSuccess } from "../utils/toast";
 
 const cardStyle = {
   background: "rgba(255,255,255,0.92)",
@@ -47,13 +53,19 @@ export default function Users() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [editingUser, setEditingUser] = useState(null);
 
-  const [form, setForm] = useState({
+  const emptyForm = {
     full_name: "",
     email: "",
     password: "",
     role: "user",
-  });
+    contact: "",
+    room_no: "",
+  };
+
+  const [form, setForm] = useState(emptyForm);
 
   useEffect(() => {
     loadUsers();
@@ -62,21 +74,33 @@ export default function Users() {
   const loadUsers = async () => {
     try {
       setLoading(true);
-      const res = await getData("/users");
+      const params = new URLSearchParams();
+      if (search.trim()) params.set("search", search.trim());
+      if (roleFilter !== "all") params.set("role", roleFilter);
+
+      const res = await getData(`/users${params.toString() ? `?${params}` : ""}`);
       setUsers(Array.isArray(res) ? res : []);
     } catch (error) {
       console.error("Failed to load users", error);
-      alert(error?.response?.data?.message || "Failed to load users");
+      showError(error?.response?.data?.message || "Failed to load users");
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadUsers();
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [search, roleFilter]);
+
   const createUser = async (e) => {
     e.preventDefault();
 
     if (!form.full_name || !form.email || !form.password || !form.role) {
-      alert("Please fill all fields.");
+      showError("Please fill all required fields.");
       return;
     }
 
@@ -84,30 +108,73 @@ export default function Users() {
       setSaving(true);
       await postData("/users", form);
 
-      setForm({
-        full_name: "",
-        email: "",
-        password: "",
-        role: "user",
-      });
-
+      setForm(emptyForm);
       await loadUsers();
-      alert("User created successfully");
+      showSuccess("User created successfully");
     } catch (error) {
       console.error("Failed to create user", error);
-      alert(error?.response?.data?.message || "Failed to create user");
+      showError(error?.response?.data?.message || "Failed to create user");
     } finally {
       setSaving(false);
     }
   };
 
+  const updateUser = async (e) => {
+    e.preventDefault();
+
+    if (!editingUser) return;
+
+    try {
+      setSaving(true);
+      await putData(`/users/${editingUser.id}`, form);
+      setEditingUser(null);
+      setForm(emptyForm);
+      await loadUsers();
+      showSuccess("User updated successfully");
+    } catch (error) {
+      console.error("Failed to update user", error);
+      showError(error?.response?.data?.message || "Failed to update user");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startEdit = (item) => {
+    setEditingUser(item);
+    setForm({
+      full_name: item.full_name || "",
+      email: item.email || "",
+      password: "",
+      role: item.role || "user",
+      contact: item.contact || "",
+      room_no: item.room_no || "",
+    });
+  };
+
+  const removeUser = async (id) => {
+    const ok = window.confirm("Delete this user?");
+    if (!ok) return;
+
+    try {
+      await deleteData(`/users/${id}`);
+      showSuccess("User deleted successfully");
+      await loadUsers();
+    } catch (error) {
+      console.error("Failed to delete user", error);
+      showError(error?.response?.data?.message || "Failed to delete user");
+    }
+  };
+
   const filteredUsers = useMemo(() => {
     return users.filter((item) => {
-      const text = `${item.full_name || ""} ${item.email || ""} ${item.role || ""}`
-        .toLowerCase();
-      return text.includes(search.toLowerCase());
+      const text =
+        `${item.full_name || ""} ${item.email || ""} ${item.role || ""} ${item.contact || ""} ${item.room_no || ""}`
+          .toLowerCase();
+      const matchesSearch = text.includes(search.toLowerCase());
+      const matchesRole = roleFilter === "all" ? true : item.role === roleFilter;
+      return matchesSearch && matchesRole;
     });
-  }, [users, search]);
+  }, [users, search, roleFilter]);
 
   const totalUsers = users.length;
   const adminCount = users.filter((u) => u.role === "admin").length;
@@ -142,7 +209,7 @@ export default function Users() {
             User Management
           </h2>
           <p style={{ color: "#64748b", marginTop: 10, marginBottom: 0 }}>
-            Create and manage admin and user accounts for the mess system.
+            Create, edit, delete, and filter admin and user accounts.
           </p>
         </div>
 
@@ -186,6 +253,28 @@ export default function Users() {
         </div>
       </div>
 
+      <div style={{ ...cardStyle, padding: 20 }}>
+        <div className="search-row">
+          <input
+            className="input"
+            placeholder="Search by name, email, contact, room..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+
+          <select
+            className="select"
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value)}
+            style={{ maxWidth: 180 }}
+          >
+            <option value="all">All Roles</option>
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+
       <div
         style={{
           display: "grid",
@@ -194,7 +283,7 @@ export default function Users() {
         }}
       >
         <form
-          onSubmit={createUser}
+          onSubmit={editingUser ? updateUser : createUser}
           style={{
             ...cardStyle,
             padding: 28,
@@ -204,10 +293,12 @@ export default function Users() {
         >
           <div>
             <h3 style={{ marginTop: 0, marginBottom: 6, fontSize: 22, color: "#0f172a" }}>
-              Create User
+              {editingUser ? "Edit User" : "Create User"}
             </h3>
             <p style={{ margin: 0, color: "#64748b" }}>
-              Add a new system user or admin account.
+              {editingUser
+                ? "Update existing user details."
+                : "Add a new system user or admin account."}
             </p>
           </div>
 
@@ -233,7 +324,9 @@ export default function Users() {
           </div>
 
           <div>
-            <label style={labelStyle}>Password</label>
+            <label style={labelStyle}>
+              Password {editingUser ? "(leave blank to keep same)" : ""}
+            </label>
             <input
               style={inputStyle}
               type="password"
@@ -255,137 +348,110 @@ export default function Users() {
             </select>
           </div>
 
-          <button type="submit" style={primaryButton} disabled={saving}>
-            {saving ? "Creating..." : "Create User"}
-          </button>
-        </form>
-
-        <div
-          style={{
-            ...cardStyle,
-            padding: 22,
-            display: "grid",
-            gap: 16,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 14,
-              flexWrap: "wrap",
-            }}
-          >
-            <div>
-              <h3 style={{ margin: 0, color: "#0f172a", fontSize: 22 }}>Users List</h3>
-              <p style={{ margin: "8px 0 0", color: "#64748b" }}>
-                Search and review all registered accounts.
-              </p>
-            </div>
-
-            <div
-              style={{
-                padding: "10px 14px",
-                borderRadius: "999px",
-                background: "rgba(16,185,129,0.12)",
-                color: "#059669",
-                fontWeight: 700,
-                fontSize: 14,
-              }}
-            >
-              Showing: {filteredUsers.length}
-            </div>
+          <div>
+            <label style={labelStyle}>Contact</label>
+            <input
+              style={inputStyle}
+              placeholder="Enter contact"
+              value={form.contact}
+              onChange={(e) => setForm({ ...form, contact: e.target.value })}
+            />
           </div>
 
-          <input
-            style={inputStyle}
-            placeholder="Search by name, email, role..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <div>
+            <label style={labelStyle}>Room No</label>
+            <input
+              style={inputStyle}
+              placeholder="Enter room no"
+              value={form.room_no}
+              onChange={(e) => setForm({ ...form, room_no: e.target.value })}
+            />
+          </div>
 
-          {loading ? (
-            <div
-              style={{
-                padding: 24,
-                textAlign: "center",
-                color: "#64748b",
-                border: "1px dashed #d9e2ef",
-                borderRadius: 18,
-              }}
-            >
-              Loading users...
-            </div>
-          ) : !filteredUsers.length ? (
-            <div
-              style={{
-                padding: 28,
-                textAlign: "center",
-                color: "#64748b",
-                border: "1px dashed #d9e2ef",
-                borderRadius: 18,
-                background: "rgba(248,250,252,0.8)",
-              }}
-            >
-              No users found.
-            </div>
-          ) : (
-            <div
-              style={{
-                overflowX: "auto",
-                border: "1px solid #edf2f7",
-                borderRadius: 18,
-              }}
-            >
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  minWidth: 700,
-                  background: "#fff",
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button style={primaryButton} type="submit" disabled={saving}>
+              {saving ? "Saving..." : editingUser ? "Update User" : "Create User"}
+            </button>
+
+            {editingUser && (
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={() => {
+                  setEditingUser(null);
+                  setForm(emptyForm);
                 }}
               >
+                Cancel Edit
+              </button>
+            )}
+          </div>
+        </form>
+
+        <div style={{ ...cardStyle, padding: 28 }}>
+          <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 22, color: "#0f172a" }}>
+            Users Directory
+          </h3>
+
+          {loading ? (
+            <div className="empty-state">Loading users...</div>
+          ) : !filteredUsers.length ? (
+            <div className="empty-state">No users found.</div>
+          ) : (
+            <div className="table-wrap">
+              <table className="table">
                 <thead>
-                  <tr style={{ background: "rgba(248,250,252,0.9)" }}>
-                    <th style={thStyle}>Name</th>
-                    <th style={thStyle}>Email</th>
-                    <th style={thStyle}>Role</th>
-                    <th style={thStyle}>Created</th>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Contact</th>
+                    <th>Room</th>
+                    <th>Created</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
+
                 <tbody>
-                  {filteredUsers.map((item, index) => (
-                    <tr
-                      key={item.id}
-                      style={{
-                        borderTop: "1px solid #eef2f7",
-                        background: index % 2 === 0 ? "#fff" : "#fcfdff",
-                      }}
-                    >
-                      <td style={tdStyle}>
+                  {filteredUsers.map((item) => (
+                    <tr key={item.id}>
+                      <td>
                         <strong>{item.full_name}</strong>
                       </td>
-                      <td style={tdStyle}>{item.email}</td>
-                      <td style={tdStyle}>
+                      <td>{item.email}</td>
+                      <td>
                         <span
-                          style={{
-                            padding: "8px 12px",
-                            borderRadius: "999px",
-                            fontSize: 13,
-                            fontWeight: 700,
-                            display: "inline-block",
-                            background:
-                              item.role === "admin"
-                                ? "rgba(124,58,237,0.12)"
-                                : "rgba(37,99,235,0.12)",
-                            color: item.role === "admin" ? "#7c3aed" : "#2563eb",
-                          }}
+                          className={
+                            item.role === "admin"
+                              ? "badge badge-info"
+                              : "badge badge-success"
+                          }
                         >
-                          {item.role}
+                          {item.role_badge || item.role}
                         </span>
                       </td>
-                      <td style={tdStyle}>{item.created_at || "-"}</td>
+                      <td>{item.contact || "-"}</td>
+                      <td>{item.room_no || "-"}</td>
+                      <td>{item.created_date_formatted || item.created_at || "-"}</td>
+                      <td>
+                        <div className="button-group">
+                          <button
+                            className="button button-secondary"
+                            type="button"
+                            onClick={() => startEdit(item)}
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            className="button button-danger"
+                            type="button"
+                            onClick={() => removeUser(item.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -397,17 +463,3 @@ export default function Users() {
     </div>
   );
 }
-
-const thStyle = {
-  textAlign: "left",
-  padding: "16px 18px",
-  color: "#64748b",
-  fontSize: 14,
-  fontWeight: 700,
-};
-
-const tdStyle = {
-  padding: "16px 18px",
-  color: "#0f172a",
-  verticalAlign: "top",
-};

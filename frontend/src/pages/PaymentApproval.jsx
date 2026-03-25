@@ -28,6 +28,10 @@ const buttonBase = {
   cursor: "pointer",
 };
 
+function isPdf(url) {
+  return String(url || "").toLowerCase().endsWith(".pdf");
+}
+
 export default function PaymentApproval() {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const isAdmin = user?.role === "admin";
@@ -90,8 +94,9 @@ export default function PaymentApproval() {
 
   const filteredPayments = useMemo(() => {
     return payments.filter((item) => {
-      const text = `${item.user_name || ""} ${item.user_email || ""} ${item.receipt_no || ""} ${item.status || ""}`
-        .toLowerCase();
+      const text =
+        `${item.user_name || ""} ${item.user_email || ""} ${item.receipt_no || ""} ${item.status || ""} ${item.bill?.period || ""}`
+          .toLowerCase();
       return text.includes(search.toLowerCase());
     });
   }, [payments, search]);
@@ -132,65 +137,98 @@ export default function PaymentApproval() {
           <div style={{ padding: 20, color: "#64748b" }}>No payments found.</div>
         ) : (
           <div style={{ display: "grid", gap: 16 }}>
-            {filteredPayments.map((item) => (
-              <div
-                key={item.id}
-                style={{
-                  border: "1px solid #e5eaf2",
-                  borderRadius: 18,
-                  padding: 18,
-                  background: "#fff",
-                  display: "grid",
-                  gap: 12,
-                }}
-              >
-                <div style={{ display: "grid", gap: 6 }}>
-                  <strong>{item.user_name}</strong>
-                  <span>{item.user_email}</span>
-                  <span>Bill Period: {item.bill?.period || "-"}</span>
-                  <span>Amount: ₹ {item.bill?.total_amount || 0}</span>
-                  <span>Receipt No: {item.receipt_no || "-"}</span>
-                  <span>Status: {item.status}</span>
-                  {item.note ? <span>Note: {item.note}</span> : null}
+            {filteredPayments.map((item) => {
+              const proofUrl = item.proof_url
+                ? `http://127.0.0.1:5000${item.proof_url}`
+                : null;
+
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    border: "1px solid #e5eaf2",
+                    borderRadius: 18,
+                    padding: 18,
+                    background: "#fff",
+                    display: "grid",
+                    gap: 12,
+                  }}
+                >
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <strong>{item.user_name}</strong>
+                    <div style={{ color: "#64748b" }}>{item.user_email}</div>
+                    <div style={{ color: "#334155" }}>
+                      Bill Period: <strong>{item.bill?.period || "-"}</strong>
+                    </div>
+                    <div style={{ color: "#334155" }}>
+                      Amount: <strong>₹ {Number(item.bill?.total_amount || 0).toFixed(2)}</strong>
+                    </div>
+                    <div style={{ color: "#334155" }}>
+                      Receipt No: <strong>{item.receipt_no || "-"}</strong>
+                    </div>
+                  </div>
+
+                  {proofUrl && (
+                    <div>
+                      {isPdf(proofUrl) ? (
+                        <a href={proofUrl} target="_blank" rel="noreferrer">
+                          Open uploaded PDF proof
+                        </a>
+                      ) : (
+                        <img
+                          src={proofUrl}
+                          alt="Payment Proof"
+                          style={{
+                            width: 260,
+                            maxWidth: "100%",
+                            borderRadius: 14,
+                            border: "1px solid #e5e7eb",
+                          }}
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  <textarea
+                    style={{ ...inputStyle, minHeight: 90, resize: "vertical" }}
+                    placeholder="Enter admin remark..."
+                    value={remarkMap[item.id] || ""}
+                    onChange={(e) =>
+                      setRemarkMap((prev) => ({
+                        ...prev,
+                        [item.id]: e.target.value,
+                      }))
+                    }
+                  />
+
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button
+                      style={{
+                        ...buttonBase,
+                        background: "linear-gradient(135deg, #10b981, #059669)",
+                        color: "#fff",
+                      }}
+                      onClick={() => handleApprove(item.id)}
+                      type="button"
+                    >
+                      Approve
+                    </button>
+
+                    <button
+                      style={{
+                        ...buttonBase,
+                        background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                        color: "#fff",
+                      }}
+                      onClick={() => handleReject(item.id)}
+                      type="button"
+                    >
+                      Reject
+                    </button>
+                  </div>
                 </div>
-
-                <input
-                  style={inputStyle}
-                  placeholder="Admin remark"
-                  value={remarkMap[item.id] || ""}
-                  onChange={(e) =>
-                    setRemarkMap((prev) => ({
-                      ...prev,
-                      [item.id]: e.target.value,
-                    }))
-                  }
-                />
-
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <button
-                    style={{
-                      ...buttonBase,
-                      background: "rgba(16,185,129,0.14)",
-                      color: "#059669",
-                    }}
-                    onClick={() => handleApprove(item.id)}
-                  >
-                    Approve
-                  </button>
-
-                  <button
-                    style={{
-                      ...buttonBase,
-                      background: "rgba(239,68,68,0.14)",
-                      color: "#dc2626",
-                    }}
-                    onClick={() => handleReject(item.id)}
-                  >
-                    Reject
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

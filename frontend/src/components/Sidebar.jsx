@@ -19,17 +19,23 @@ const adminLinks = [
   { to: "/payment-approval", label: "Payment Approval" },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ open = false, onClose = () => {} }) {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const isAdmin = user?.role === "admin";
 
   return (
-    <aside className="sidebar">
-      <div className="brand">
-        <div className="brand-title">MessMate Pro</div>
-        <div className="brand-subtitle">
-          {isAdmin ? "Admin Control Panel" : "Student Experience Panel"}
+    <aside className={`sidebar ${open ? "sidebar-mobile-open" : ""}`}>
+      <div className="sidebar-head">
+        <div className="brand">
+          <div className="brand-title">MessMate Pro</div>
+          <div className="brand-subtitle">
+            {isAdmin ? "Admin Control Panel" : "Student Experience Panel"}
+          </div>
         </div>
+
+        <button className="sidebar-close" type="button" onClick={onClose}>
+          ✕
+        </button>
       </div>
 
       <div className="nav-section">Main Menu</div>
@@ -38,9 +44,8 @@ export default function Sidebar() {
           <NavLink
             key={link.to}
             to={link.to}
-            className={({ isActive }) =>
-              `nav-item${isActive ? " active" : ""}`
-            }
+            onClick={onClose}
+            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
           >
             {link.label}
           </NavLink>
@@ -55,9 +60,8 @@ export default function Sidebar() {
               <NavLink
                 key={link.to}
                 to={link.to}
-                className={({ isActive }) =>
-                  `nav-item${isActive ? " active" : ""}`
-                }
+                onClick={onClose}
+                className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
               >
                 {link.label}
               </NavLink>

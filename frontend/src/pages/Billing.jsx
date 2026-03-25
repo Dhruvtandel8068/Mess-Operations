@@ -3,6 +3,43 @@ import { getData, postData } from "../services/api";
 import { showSuccess, showError } from "../utils/toast";
 import paymentQR from "../assets/payment-qr.jpeg";
 
+function statusBadgeClass(status) {
+  const value = String(status || "").toLowerCase();
+
+  if (value === "paid" || value === "approved") return "badge badge-success";
+  if (value === "pending approval" || value === "pending") return "badge badge-warning";
+  if (value === "rejected") return "badge badge-danger";
+  return "badge badge-info";
+}
+
+function openPrintWindow(title, html) {
+  const win = window.open("", "_blank", "width=900,height=700");
+  if (!win) return;
+
+  win.document.write(`
+    <html>
+      <head>
+        <title>${title}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 24px; color: #111827; }
+          h1 { margin-bottom: 6px; }
+          p { margin: 6px 0; }
+          table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+          th, td { border: 1px solid #d1d5db; padding: 10px; text-align: left; font-size: 14px; }
+          th { background: #f3f4f6; }
+          .meta { margin-top: 18px; }
+        </style>
+      </head>
+      <body>
+        ${html}
+      </body>
+    </html>
+  `);
+  win.document.close();
+  win.focus();
+  win.print();
+}
+
 export default function Billing() {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const isAdmin = user?.role === "admin";
@@ -15,6 +52,7 @@ export default function Billing() {
 
   const [selectedBill, setSelectedBill] = useState(null);
   const [transactionId, setTransactionId] = useState("");
+  const [proofFile, setProofFile] = useState(null);
   const [paying, setPaying] = useState(false);
 
   const [generationSummary, setGenerationSummary] = useState(null);
@@ -60,10 +98,7 @@ export default function Billing() {
   const generateBills = async (e) => {
     e.preventDefault();
 
-    if (
-      generateForm.billing_type === "single" &&
-      (!generateForm.user_id || generateForm.user_id === "")
-    ) {
+    if (generateForm.billing_type === "single" && !generateForm.user_id) {
       showError("Please select a user");
       return;
     }
@@ -81,7 +116,6 @@ export default function Billing() {
       }
 
       const res = await postData("/billing/generate", payload);
-
       showSuccess(res?.message || "Bills generated successfully");
       setGenerationSummary(res?.summary || null);
       await loadBills();
@@ -94,14 +128,21 @@ export default function Billing() {
   const openPaymentBox = (bill) => {
     setSelectedBill(bill);
     setTransactionId("");
+    setProofFile(null);
   };
 
   const closePaymentBox = () => {
     setSelectedBill(null);
     setTransactionId("");
+    setProofFile(null);
   };
 
   const payBill = async (billId) => {
+    if (!proofFile) {
+      showError("Please upload payment screenshot/proof");
+      return;
+    }
+
     try {
       setPaying(true);
 
@@ -109,6 +150,7 @@ export default function Billing() {
       fd.append("mode", "UPI");
       fd.append("receipt_no", transactionId || `REC-${Date.now()}`);
       fd.append("note", "Paid via QR payment");
+      fd.append("proof", proofFile);
 
       await postData(`/billing/${billId}/pay`, fd, true);
 
@@ -123,16 +165,92 @@ export default function Billing() {
     }
   };
 
+  const downloadSingleBill = async (billId) => {
+    try {
+      const data = await getData(`/reports/bill-export/${billId}`);
+
+      openPrintWindow(
+        `Bill ${data.period}`,
+        `
+          <h1>Mess Bill</h1>
+          <p><strong>User:</strong> ${data.user_name}</p>
+          <p><strong>Email:</strong> ${data.user_email}</p>
+          <p><strong>Month/Year:</strong> ${String(data.month).padStart(2, "0")}/${data.year}</p>
+          <p><strong>Total Meals:</strong> ${data.meals}</p>
+          <p><strong>Per Meal Cost:</strong> ₹ ${Number(data.per_meal_cost || 0).toFixed(2)}</p>
+          <p><strong>Total Amount:</strong> ₹ ${Number(data.total_amount || 0).toFixed(2)}</p>
+          <p><strong>Payment Status:</strong> ${data.payment_status}</p>
+          <div class="meta"><small>Generated from Mess Operations</small></div>
+        `
+      );
+    } catch (error) {
+      console.error(error);
+      showError(error?.response?.data?.message || "Failed to export bill");
+    }
+  };
+
+  const exportMonthlyBills = async () => {
+    try {
+      const data = await getData(
+        `/reports/bills-export?month=${generateForm.month}&year=${generateForm.year}`
+      );
+
+      const rows = (data.bills || [])
+        .map(
+          (item) => `
+            <tr>
+              <td>${item.user_name}</td>
+              <td>${item.user_email}</td>
+              <td>${item.period}</td>
+              <td>${item.meals}</td>
+              <td>₹ ${Number(item.per_meal_cost || 0).toFixed(2)}</td>
+              <td>₹ ${Number(item.total_amount || 0).toFixed(2)}</td>
+              <td>${item.payment_status}</td>
+            </tr>
+          `
+        )
+        .join("");
+
+      openPrintWindow(
+        `Monthly Bills ${data.month}/${data.year}`,
+        `
+          <h1>Monthly Bills Report</h1>
+          <p><strong>Month:</strong> ${String(data.month).padStart(2, "0")}/${data.year}</p>
+          <p><strong>Total Bills:</strong> ${data.count}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Email</th>
+                <th>Period</th>
+                <th>Meals</th>
+                <th>Per Meal Cost</th>
+                <th>Total Amount</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        `
+      );
+    } catch (error) {
+      console.error(error);
+      showError(error?.response?.data?.message || "Failed to export bills");
+    }
+  };
+
   const filteredBills = useMemo(() => {
     return bills.filter((bill) => {
-      const matchesSearch = `${bill.user_name} ${bill.period} ${bill.status}`
+      const latestPayment = bill.latest_payment || bill.payments?.[0] || null;
+
+      const matchesSearch = `${bill.user_name || ""} ${bill.period || ""} ${bill.status || ""} ${latestPayment?.status || ""} ${latestPayment?.admin_remark || ""}`
         .toLowerCase()
         .includes(search.toLowerCase());
 
       const matchesStatus =
         statusFilter === "all"
           ? true
-          : bill.status?.toLowerCase() === statusFilter;
+          : (bill.status || "").toLowerCase() === statusFilter;
 
       return matchesSearch && matchesStatus;
     });
@@ -141,9 +259,7 @@ export default function Billing() {
   const totalBills = bills.length;
   const paidBills = bills.filter((bill) => bill.status === "Paid").length;
   const unpaidBills = bills.filter((bill) => bill.status === "Unpaid").length;
-  const pendingBills = bills.filter(
-    (bill) => bill.status === "Pending Approval"
-  ).length;
+  const pendingBills = bills.filter((bill) => bill.status === "Pending Approval").length;
 
   const totalAmount = bills.reduce(
     (sum, bill) => sum + Number(bill.total_amount || 0),
@@ -152,8 +268,7 @@ export default function Billing() {
 
   const selectedUserName =
     generateForm.billing_type === "single"
-      ? users.find((u) => Number(u.id) === Number(generateForm.user_id))
-          ?.full_name || "No user selected"
+      ? users.find((u) => Number(u.id) === Number(generateForm.user_id))?.full_name || "No user selected"
       : "All users";
 
   return (
@@ -164,7 +279,7 @@ export default function Billing() {
             <div>
               <h2 className="page-title">Billing Management</h2>
               <p className="page-subtitle">
-                Generate monthly bills, track payments, and manage billing summary.
+                Generate monthly bills, upload payment proof, approve payments, and export bill reports.
               </p>
             </div>
 
@@ -257,16 +372,7 @@ export default function Billing() {
                 )}
               </div>
 
-              <div
-                style={{
-                  padding: 12,
-                  borderRadius: 12,
-                  background: "rgba(37, 99, 235, 0.08)",
-                  border: "1px solid rgba(37, 99, 235, 0.15)",
-                  color: "#0f172a",
-                  fontWeight: 600,
-                }}
-              >
+              <div className="notice-card">
                 Bill will be created for: {selectedUserName}
               </div>
 
@@ -275,6 +381,14 @@ export default function Billing() {
                   {generateForm.billing_type === "single"
                     ? "Generate Selected User Bill"
                     : "Generate All Bills"}
+                </button>
+
+                <button
+                  className="button button-secondary"
+                  type="button"
+                  onClick={exportMonthlyBills}
+                >
+                  Export Month Bills PDF
                 </button>
               </div>
             </form>
@@ -301,6 +415,12 @@ export default function Billing() {
                 <div className="stat-value">{pendingBills}</div>
                 <div className="stat-trend">Waiting for admin approval</div>
               </div>
+
+              <div className="stat-card">
+                <div className="stat-label">Unpaid Bills</div>
+                <div className="stat-value">{unpaidBills}</div>
+                <div className="stat-trend">Awaiting payment</div>
+              </div>
             </div>
           </section>
         </section>
@@ -308,63 +428,9 @@ export default function Billing() {
         {generationSummary && (
           <section className="glass-card">
             <h3 className="section-title">Generation Summary</h3>
-
-            <div className="stats-grid" style={{ marginBottom: 18 }}>
-              <div className="stat-card">
-                <div className="stat-label">Period</div>
-                <div className="stat-value">{generationSummary.period}</div>
-                <div className="stat-trend">Billing month</div>
-              </div>
-
-              <div className="stat-card">
-                <div className="stat-label">Created</div>
-                <div className="stat-value">{generationSummary.created_count}</div>
-                <div className="stat-trend">New bills added</div>
-              </div>
-
-              <div className="stat-card">
-                <div className="stat-label">Updated</div>
-                <div className="stat-value">{generationSummary.updated_count}</div>
-                <div className="stat-trend">Existing bills updated</div>
-              </div>
-
-              <div className="stat-card">
-                <div className="stat-label">Total Meals</div>
-                <div className="stat-value">{generationSummary.total_generated_meals}</div>
-                <div className="stat-trend">Meals counted</div>
-              </div>
-
-              <div className="stat-card">
-                <div className="stat-label">Total Amount</div>
-                <div className="stat-value">
-                  ₹ {Number(generationSummary.total_generated_amount || 0).toFixed(2)}
-                </div>
-                <div className="stat-trend">Bill collection total</div>
-              </div>
-            </div>
-
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>User</th>
-                    <th>Email</th>
-                    <th>Total Meals</th>
-                    <th>Total Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {generationSummary.generated_users?.map((item) => (
-                    <tr key={item.user_id}>
-                      <td><strong>{item.user_name}</strong></td>
-                      <td>{item.email}</td>
-                      <td>{item.total_meals}</td>
-                      <td>₹ {Number(item.total_amount || 0).toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+              {JSON.stringify(generationSummary, null, 2)}
+            </pre>
           </section>
         )}
 
@@ -403,7 +469,9 @@ export default function Billing() {
                   <th>Total Meals</th>
                   <th>Per Meal</th>
                   <th>Total Amount</th>
-                  <th>Status</th>
+                  <th>Bill Status</th>
+                  <th>Payment Status</th>
+                  <th>Remark</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -411,55 +479,65 @@ export default function Billing() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan="7">
+                    <td colSpan="9">
                       <div className="empty-state">Loading bills...</div>
                     </td>
                   </tr>
                 ) : filteredBills.length ? (
-                  filteredBills.map((bill) => (
-                    <tr key={bill.id}>
-                      <td>
-                        <strong>{bill.user_name}</strong>
-                      </td>
-                      <td>{bill.period}</td>
-                      <td>{bill.total_meals}</td>
-                      <td>₹ {bill.per_meal_cost}</td>
-                      <td>₹ {bill.total_amount}</td>
-                      <td>
-                        <span
-                          className={`badge ${
-                            bill.status === "Paid"
-                              ? "badge-success"
-                              : bill.status === "Pending Approval"
-                              ? "badge-info"
-                              : "badge-danger"
-                          }`}
-                        >
-                          {bill.status}
-                        </span>
-                      </td>
-                      <td>
-                        {!isAdmin && bill.status === "Unpaid" ? (
-                          <button
-                            className="button button-primary"
-                            type="button"
-                            onClick={() => openPaymentBox(bill)}
-                          >
-                            Pay Now
-                          </button>
-                        ) : bill.status === "Paid" ? (
-                          <span className="badge badge-success">Paid</span>
-                        ) : bill.status === "Pending Approval" ? (
-                          <span className="badge badge-info">Pending Approval</span>
-                        ) : (
-                          <span className="badge badge-info">Admin View</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+                  filteredBills.map((bill) => {
+                    const latestPayment = bill.latest_payment || bill.payments?.[0] || null;
+
+                    return (
+                      <tr key={bill.id}>
+                        <td>
+                          <strong>{bill.user_name}</strong>
+                        </td>
+                        <td>{bill.period}</td>
+                        <td>{bill.total_meals}</td>
+                        <td>₹ {Number(bill.per_meal_cost || 0).toFixed(2)}</td>
+                        <td>₹ {Number(bill.total_amount || 0).toFixed(2)}</td>
+                        <td>
+                          <span className={statusBadgeClass(bill.status)}>
+                            {bill.status}
+                          </span>
+                        </td>
+                        <td>
+                          {latestPayment ? (
+                            <span className={statusBadgeClass(latestPayment.status)}>
+                              {latestPayment.status}
+                            </span>
+                          ) : (
+                            <span className="badge badge-info">No Payment</span>
+                          )}
+                        </td>
+                        <td>{latestPayment?.admin_remark || "-"}</td>
+                        <td>
+                          <div className="button-group">
+                            {!isAdmin && bill.status === "Unpaid" && (
+                              <button
+                                className="button button-primary"
+                                type="button"
+                                onClick={() => openPaymentBox(bill)}
+                              >
+                                Pay Now
+                              </button>
+                            )}
+
+                            <button
+                              className="button button-secondary"
+                              type="button"
+                              onClick={() => downloadSingleBill(bill.id)}
+                            >
+                              Download Bill PDF
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 ) : (
                   <tr>
-                    <td colSpan="7">
+                    <td colSpan="9">
                       <div className="empty-state">No bills found.</div>
                     </td>
                   </tr>
@@ -471,34 +549,8 @@ export default function Billing() {
       </div>
 
       {selectedBill && (
-        <div
-          onClick={closePaymentBox}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(15, 23, 42, 0.55)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 20,
-            zIndex: 9999,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "100%",
-              maxWidth: 580,
-              background: "var(--panel-strong, #fff)",
-              borderRadius: 24,
-              padding: 28,
-              boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
-              border: "1px solid rgba(148, 163, 184, 0.18)",
-              display: "grid",
-              gap: 18,
-              textAlign: "center",
-            }}
-          >
+        <div className="modal-overlay" onClick={closePaymentBox}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <h3 className="section-title" style={{ marginBottom: 0 }}>
               Scan & Pay
             </h3>
@@ -507,16 +559,7 @@ export default function Billing() {
               Scan this QR using Google Pay, PhonePe, Paytm, or any UPI app.
             </p>
 
-            <div
-              style={{
-                padding: 16,
-                borderRadius: 20,
-                background: "#fff",
-                border: "1px solid rgba(148, 163, 184, 0.18)",
-                margin: "0 auto",
-                width: "fit-content",
-              }}
-            >
+            <div className="qr-card">
               <img
                 src={paymentQR}
                 alt="Payment QR"
@@ -529,19 +572,28 @@ export default function Billing() {
               />
             </div>
 
-            <div style={{ display: "grid", gap: 6 }}>
-              <p><strong>User:</strong> {selectedBill.user_name}</p>
-              <p><strong>Period:</strong> {selectedBill.period}</p>
-              <p><strong>Amount:</strong> ₹ {selectedBill.total_amount}</p>
-              <p><strong>Payment Type:</strong> UPI QR Payment</p>
+            <div className="notice-card">
+              Bill Amount: ₹ {Number(selectedBill.total_amount || 0).toFixed(2)}
             </div>
 
             <input
               className="input"
-              placeholder="Enter transaction ID after payment"
+              placeholder="Transaction ID / Receipt No"
               value={transactionId}
               onChange={(e) => setTransactionId(e.target.value)}
             />
+
+            <div>
+              <label className="section-title" style={{ display: "block", marginBottom: 8 }}>
+                Upload Payment Screenshot
+              </label>
+              <input
+                className="input"
+                type="file"
+                accept=".jpg,.jpeg,.png,.pdf"
+                onChange={(e) => setProofFile(e.target.files?.[0] || null)}
+              />
+            </div>
 
             <div className="button-group" style={{ justifyContent: "center" }}>
               <button
@@ -553,12 +605,8 @@ export default function Billing() {
                 {paying ? "Submitting..." : "Submit Payment"}
               </button>
 
-              <button
-                className="button button-secondary"
-                type="button"
-                onClick={closePaymentBox}
-              >
-                Close
+              <button className="button button-secondary" type="button" onClick={closePaymentBox}>
+                Cancel
               </button>
             </div>
           </div>

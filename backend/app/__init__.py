@@ -44,8 +44,9 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    # Create upload folder
-    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+    upload_folder = app.config.get("UPLOAD_FOLDER", "uploads")
+    os.makedirs(upload_folder, exist_ok=True)
+    app.config["UPLOAD_FOLDER"] = upload_folder
 
     CORS(
         app,
@@ -54,6 +55,8 @@ def create_app():
                 "origins": [
                     "http://localhost:5173",
                     "http://127.0.0.1:5173",
+                    "http://localhost:5174",
+                    "http://127.0.0.1:5174",
                 ]
             }
         },
@@ -89,8 +92,8 @@ def create_app():
     def uploaded_file(filename):
         return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
-    # Create tables
     with app.app_context():
+        # Import all models so SQLAlchemy knows them before create_all()
         from app.models.attendance import Attendance
         from app.models.bill import Bill
         from app.models.menu import MenuItem
@@ -98,6 +101,7 @@ def create_app():
         from app.models.complaint import Complaint
         from app.models.notification import Notification
         from app.models.payment import Payment
+        from app.models.expense import Expense
 
         db.create_all()
         seed_admin_and_categories()

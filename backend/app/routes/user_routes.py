@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
 from werkzeug.security import generate_password_hash
@@ -8,9 +10,30 @@ from app.models.attendance import Attendance
 from app.utils.db import db
 
 user_bp = Blueprint("user_bp", __name__)
+
+
 def is_admin():
     claims = get_jwt()
     return claims.get("role") == "admin"
+
+
+def user_to_dict(user):
+    data = user.to_dict() if hasattr(user, "to_dict") else {
+        "id": user.id,
+        "full_name": user.full_name,
+        "email": user.email,
+        "role": user.role,
+        "contact": getattr(user, "contact", None),
+        "room_no": getattr(user, "room_no", None),
+        "created_at": str(getattr(user, "created_at", None)) if getattr(user, "created_at", None) else None,
+    }
+    data["role_badge"] = "Admin" if data.get("role") == "admin" else "User"
+    data["created_date_formatted"] = (
+        getattr(user, "created_at").strftime("%d %b %Y, %I:%M %p")
+        if getattr(user, "created_at", None)
+        else None
+    )
+    return data
 
 
 def attendance_to_dict(row):
@@ -29,6 +52,7 @@ def attendance_to_dict(row):
         "created_at": str(row.created_at) if row.created_at else None,
     }
 
+
 @user_bp.route("/users", methods=["GET"])
 @jwt_required()
 def get_users():
@@ -36,7 +60,13 @@ def get_users():
         return jsonify({"message": "Only admin can view users"}), 403
 
     search = (request.args.get("search") or "").strip()
+    role = (request.args.get("role") or "").strip().lower()
+
     query = User.query
+
+    if role in ["admin", "user"]:
+        query = query.filter(User.role == role)
+
     if search:
         like = f"%{search}%"
         query = query.filter(
@@ -49,7 +79,7 @@ def get_users():
         )
 
     users = query.order_by(User.created_at.desc()).all()
-    return jsonify([u.to_dict() for u in users])
+    return jsonify([user_to_dict(u) for u in users]), 200
 
 
 @user_bp.route("/users", methods=["POST"])
@@ -82,7 +112,8 @@ def create_user():
     )
     db.session.add(user)
     db.session.commit()
-    return jsonify({"message": "User created successfully", "user": user.to_dict()}), 201
+    return jsonify({"message": "User created successfully", "user": user_to_dict(user)}), 201
+
 
 @user_bp.route("/users/<int:user_id>", methods=["PUT"])
 @jwt_required()
@@ -94,21 +125,23 @@ def update_user(user_id):
     data = request.get_json() or {}
 
     email = (data.get("email") or user.email).strip().lower()
-    if email != user.email and User.query.filter_by(email=email).first():
+    existing_user = User.query.filter(User.email == email, User.id != user.id).first()
+    if existing_user:
         return jsonify({"message": "Email already in use"}), 409
 
     user.full_name = (data.get("full_name") or user.full_name).strip()
     user.email = email
     user.role = "admin" if (data.get("role") or user.role) == "admin" else "user"
-    user.contact = (data.get("contact") or "").strip() or None
-    user.room_no = (data.get("room_no") or "").strip() or None
+    user.contact = (data.get("contact") or user.contact or "").strip() or None
+    user.room_no = (data.get("room_no") or user.room_no or "").strip() or None
 
     password = data.get("password") or ""
     if password:
         user.password_hash = generate_password_hash(password)
 
     db.session.commit()
-    return jsonify({"message": "User updated successfully", "user": user.to_dict()})
+    return jsonify({"message": "User updated successfully", "user": user_to_dict(user)}), 200
+
 
 @user_bp.route("/users/<int:user_id>", methods=["DELETE"])
 @jwt_required()
@@ -116,17 +149,21 @@ def delete_user(user_id):
     if not is_admin():
         return jsonify({"message": "Only admin can delete users"}), 403
 
+    current_user_id = int(get_jwt_identity())
+    if current_user_id == user_id:
+        return jsonify({"message": "You cannot delete your own account"}), 400
+
     user = User.query.get_or_404(user_id)
     db.session.delete(user)
     db.session.commit()
-    return jsonify({"message": "User deleted successfully"})
+    return jsonify({"message": "User deleted successfully"}), 200
 
 
 @user_bp.route("/me", methods=["GET"])
 @jwt_required()
 def get_me():
     user = User.query.get_or_404(int(get_jwt_identity()))
-    return jsonify(user.to_dict())
+    return jsonify(user_to_dict(user)), 200
 
 
 @user_bp.route("/me", methods=["PUT"])
@@ -136,8 +173,8 @@ def update_me():
     data = request.get_json() or {}
 
     full_name = (data.get("full_name") or user.full_name).strip()
-    contact = (data.get("contact") or "").strip()
-    room_no = (data.get("room_no") or "").strip()
+    contact = (data.get("contact") or user.contact or "").strip()
+    room_no = (data.get("room_no") or user.room_no or "").strip()
 
     if not full_name:
         return jsonify({"message": "Full name is required"}), 400
@@ -145,19 +182,35 @@ def update_me():
     user.full_name = full_name
     user.contact = contact or None
     user.room_no = room_no or None
-    db.session.commit()
 
-    return jsonify({"message": "Profile updated successfully", "user": user.to_dict()})
+    password = (data.get("password") or "").strip()
+    if password:
+        user.password_hash = generate_password_hash(password)
+
+    db.session.commit()
+    return jsonify({"message": "Profile updated successfully", "user": user_to_dict(user)}), 200
+
 
 @user_bp.route("/attendance", methods=["GET"])
 @jwt_required()
 def get_attendance():
     user_id = int(get_jwt_identity())
+    month = request.args.get("month")
+    year = request.args.get("year")
+
+    query = Attendance.query
     if is_admin():
-        rows = Attendance.query.order_by(Attendance.date.desc()).all()
+        pass
     else:
-        rows = Attendance.query.filter_by(user_id=user_id).order_by(Attendance.date.desc()).all()
-    return jsonify([attendance_to_dict(r) for r in rows])
+        query = query.filter_by(user_id=user_id)
+
+    if month:
+        query = query.filter(db.extract("month", Attendance.date) == int(month))
+    if year:
+        query = query.filter(db.extract("year", Attendance.date) == int(year))
+
+    rows = query.order_by(Attendance.date.desc()).all()
+    return jsonify([attendance_to_dict(r) for r in rows]), 200
 
 
 @user_bp.route("/attendance", methods=["POST"])
@@ -192,7 +245,8 @@ def create_or_update_attendance():
         row.dinner = bool(data.get("dinner"))
 
     db.session.commit()
-    return jsonify({"message": "Attendance saved successfully", "attendance": attendance_to_dict(row)})
+    return jsonify({"message": "Attendance saved successfully", "attendance": attendance_to_dict(row)}), 200
+
 
 @user_bp.route("/attendance/<int:attendance_id>", methods=["DELETE"])
 @jwt_required()
@@ -203,4 +257,4 @@ def delete_attendance(attendance_id):
 
     db.session.delete(row)
     db.session.commit()
-    return jsonify({"message": "Attendance deleted successfully"})
+    return jsonify({"message": "Attendance deleted successfully"}), 200

@@ -6,6 +6,7 @@ export default function Layout() {
   const navigate = useNavigate();
   const [user, setUser] = useState({});
   const [darkMode, setDarkMode] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const storedUser = JSON.parse(localStorage.getItem("user") || "{}");
@@ -16,6 +17,10 @@ export default function Layout() {
     setDarkMode(isDark);
     document.body.classList.toggle("dark-mode", isDark);
   }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle("sidebar-open", sidebarOpen);
+  }, [sidebarOpen]);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -37,15 +42,29 @@ export default function Layout() {
 
   return (
     <div className="app-shell">
-      <Sidebar />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
+      {sidebarOpen && (
+        <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+      )}
 
       <main className="main-content">
         <div className="topbar">
-          <div>
-            <h1 className="topbar-title">Mess Operations Dashboard</h1>
-            <p className="topbar-subtitle">
-              Welcome back, {displayName} ({displayRole})
-            </p>
+          <div className="topbar-left">
+            <button
+              className="button button-secondary mobile-menu-btn"
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+            >
+              ☰ Menu
+            </button>
+
+            <div>
+              <h1 className="topbar-title">Mess Operations Dashboard</h1>
+              <p className="topbar-subtitle">
+                Welcome back, {displayName} ({displayRole})
+              </p>
+            </div>
           </div>
 
           <div className="topbar-actions">
@@ -58,7 +77,7 @@ export default function Layout() {
               <span>{displayRole} Online</span>
             </div>
 
-            <button className="button button-dark" onClick={handleLogout}>
+            <button className="button button-dark" onClick={handleLogout} type="button">
               Logout
             </button>
           </div>

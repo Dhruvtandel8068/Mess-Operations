@@ -1,43 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { getData, postData } from "../services/api";
-
-const cardStyle = {
-  background: "rgba(255,255,255,0.92)",
-  borderRadius: 24,
-  border: "1px solid rgba(148,163,184,0.14)",
-  boxShadow: "0 18px 40px rgba(15,23,42,0.06)",
-};
-
-const inputStyle = {
-  width: "100%",
-  padding: "14px 16px",
-  borderRadius: 14,
-  border: "1px solid #dbe3ef",
-  outline: "none",
-  fontSize: 15,
-  background: "#fff",
-  boxSizing: "border-box",
-};
-
-const labelStyle = {
-  fontSize: 14,
-  fontWeight: 600,
-  color: "#334155",
-  marginBottom: 8,
-  display: "block",
-};
-
-const buttonStyle = {
-  padding: "14px 18px",
-  borderRadius: 14,
-  border: "none",
-  background: "linear-gradient(135deg, #2563eb, #7c3aed)",
-  color: "#fff",
-  fontWeight: 700,
-  fontSize: 15,
-  cursor: "pointer",
-  boxShadow: "0 14px 30px rgba(37,99,235,0.22)",
-};
+import {
+  deleteData,
+  getData,
+  postData,
+  putData,
+} from "../services/api";
+import { showError, showSuccess } from "../utils/toast";
 
 export default function Expenses() {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
@@ -45,532 +13,393 @@ export default function Expenses() {
 
   const [expenses, setExpenses] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [summary, setSummary] = useState({ grand_total: 0, categories: [] });
+
   const [form, setForm] = useState({
     title: "",
     category_id: "",
     amount: "",
     expense_date: new Date().toISOString().slice(0, 10),
   });
+
+  const [editingExpense, setEditingExpense] = useState(null);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [monthFilter, setMonthFilter] = useState(String(new Date().getMonth() + 1));
+  const [yearFilter, setYearFilter] = useState(String(new Date().getFullYear()));
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [monthFilter, yearFilter]);
+
+  const buildQuery = () => {
+    const params = new URLSearchParams();
+    if (monthFilter) params.set("month", monthFilter);
+    if (yearFilter) params.set("year", yearFilter);
+    if (categoryFilter !== "all") params.set("category_id", categoryFilter);
+    return params.toString();
+  };
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const [expRes, catRes] = await Promise.all([
-        getData("/expenses/"),
+      const query = buildQuery();
+
+      const [expRes, catRes, sumRes] = await Promise.all([
+        getData(`/expenses/${query ? `?${query}` : ""}`),
         getData("/expenses/categories"),
+        getData(`/expenses/summary${query ? `?${query}` : ""}`),
       ]);
+
       setExpenses(Array.isArray(expRes) ? expRes : []);
       setCategories(Array.isArray(catRes) ? catRes : []);
+      setSummary(sumRes || { grand_total: 0, categories: [] });
     } catch (error) {
       console.error("Failed to load expenses", error);
+      showError(error?.response?.data?.message || "Failed to load expenses");
     } finally {
       setLoading(false);
     }
+  };
+
+  const resetForm = () => {
+    setForm({
+      title: "",
+      category_id: "",
+      amount: "",
+      expense_date: new Date().toISOString().slice(0, 10),
+    });
+    setEditingExpense(null);
   };
 
   const submitExpense = async (e) => {
     e.preventDefault();
 
     if (!form.title || !form.category_id || !form.amount || !form.expense_date) {
-      alert("Please fill all fields.");
+      showError("Please fill all fields.");
       return;
     }
 
     try {
       setSaving(true);
-      await postData("/expenses/", {
+
+      const payload = {
         ...form,
         category_id: Number(form.category_id),
         amount: Number(form.amount),
-      });
+      };
 
-      setForm({
-        title: "",
-        category_id: "",
-        amount: "",
-        expense_date: new Date().toISOString().slice(0, 10),
-      });
+      if (editingExpense) {
+        await putData(`/expenses/${editingExpense.id}`, payload);
+        showSuccess("Expense updated successfully");
+      } else {
+        await postData("/expenses/", payload);
+        showSuccess("Expense added successfully");
+      }
 
+      resetForm();
       await loadData();
     } catch (error) {
-      console.error("Failed to add expense", error);
-      alert("Failed to add expense");
+      console.error("Failed to save expense", error);
+      showError(error?.response?.data?.message || "Failed to save expense");
     } finally {
       setSaving(false);
     }
   };
 
+  const startEdit = (item) => {
+    setEditingExpense(item);
+    setForm({
+      title: item.title || "",
+      category_id: item.category_id || "",
+      amount: item.amount || "",
+      expense_date: item.expense_date || new Date().toISOString().slice(0, 10),
+    });
+  };
+
+  const handleDelete = async (id) => {
+    const ok = window.confirm("Delete this expense?");
+    if (!ok) return;
+
+    try {
+      await deleteData(`/expenses/${id}`);
+      showSuccess("Expense deleted successfully");
+      await loadData();
+    } catch (error) {
+      console.error("Failed to delete expense", error);
+      showError(error?.response?.data?.message || "Failed to delete expense");
+    }
+  };
+
+  const exportExpenses = () => {
+    const query = buildQuery();
+    window.open(
+      `http://127.0.0.1:5000/api/expenses/export${query ? `?${query}` : ""}`,
+      "_blank"
+    );
+  };
+
   const filteredExpenses = useMemo(() => {
     return expenses.filter((item) => {
-      const matchesSearch = `${item.title} ${item.category_name || ""} ${item.amount || ""}`
+      const matchesSearch = `${item.title} ${item.category_name || ""} ${item.amount || ""} ${item.expense_date || ""}`
         .toLowerCase()
         .includes(search.toLowerCase());
 
-      const matchesCategory =
-        categoryFilter === "all"
-          ? true
-          : String(item.category_id) === String(categoryFilter);
-
-      return matchesSearch && matchesCategory;
+      return matchesSearch;
     });
-  }, [expenses, search, categoryFilter]);
+  }, [expenses, search]);
 
   const total = filteredExpenses.reduce(
     (sum, item) => sum + Number(item.amount || 0),
     0
   );
 
-  const monthlyTotal = filteredExpenses
-    .filter((item) => {
-      if (!item.expense_date) return false;
-      const d = new Date(item.expense_date);
-      const now = new Date();
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    })
-    .reduce((sum, item) => sum + Number(item.amount || 0), 0);
-
-  const avgExpense = filteredExpenses.length ? total / filteredExpenses.length : 0;
-
-  const getCategoryBadge = (name) => {
-    const n = (name || "").toLowerCase();
-
-    if (n.includes("vegetable")) {
-      return { background: "rgba(34,197,94,0.14)", color: "#15803d" };
-    }
-    if (n.includes("milk")) {
-      return { background: "rgba(59,130,246,0.14)", color: "#1d4ed8" };
-    }
-    if (n.includes("gas")) {
-      return { background: "rgba(249,115,22,0.14)", color: "#c2410c" };
-    }
-    if (n.includes("clean")) {
-      return { background: "rgba(168,85,247,0.14)", color: "#7e22ce" };
-    }
-
-    return { background: "rgba(100,116,139,0.14)", color: "#334155" };
-  };
+  const avgExpense = filteredExpenses.length
+    ? total / filteredExpenses.length
+    : 0;
 
   return (
-    <div style={{ display: "grid", gap: 22 }}>
-      <div
-        style={{
-          ...cardStyle,
-          padding: 28,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 16,
-          flexWrap: "wrap",
-        }}
-      >
-        <div>
-          <h2
-            style={{
-              margin: 0,
-              fontSize: 24,
-              fontWeight: 800,
-              color: "#0f172a",
-            }}
-          >
-            Expense Management
-          </h2>
-          <p
-            style={{
-              color: "#64748b",
-              marginTop: 10,
-              marginBottom: 0,
-              fontSize: 15,
-            }}
-          >
-            Track category-wise mess expenses with better monitoring and monthly totals.
-          </p>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            flexWrap: "wrap",
-          }}
-        >
-          <div
-            style={{
-              padding: "10px 14px",
-              borderRadius: "999px",
-              background: "rgba(37,99,235,0.10)",
-              color: "#2563eb",
-              fontWeight: 700,
-              fontSize: 14,
-            }}
-          >
-            Records: {filteredExpenses.length}
-          </div>
-          <div
-            style={{
-              padding: "10px 14px",
-              borderRadius: "999px",
-              background: "rgba(16,185,129,0.10)",
-              color: "#059669",
-              fontWeight: 700,
-              fontSize: 14,
-            }}
-          >
-            Total: ₹ {total.toFixed(2)}
-          </div>
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: 18,
-        }}
-      >
-        <div style={{ ...cardStyle, padding: 22 }}>
-          <div style={{ color: "#64748b", fontWeight: 600, marginBottom: 10 }}>
-            Total Expense
-          </div>
-          <div style={{ fontSize: 32, fontWeight: 800, color: "#0f172a" }}>
-            ₹ {total.toFixed(2)}
-          </div>
-          <div style={{ color: "#10b981", marginTop: 10, fontWeight: 600 }}>
-            Filtered records total
-          </div>
-        </div>
-
-        <div style={{ ...cardStyle, padding: 22 }}>
-          <div style={{ color: "#64748b", fontWeight: 600, marginBottom: 10 }}>
-            This Month
-          </div>
-          <div style={{ fontSize: 32, fontWeight: 800, color: "#0f172a" }}>
-            ₹ {monthlyTotal.toFixed(2)}
-          </div>
-          <div style={{ color: "#10b981", marginTop: 10, fontWeight: 600 }}>
-            Current month spending
-          </div>
-        </div>
-
-        <div style={{ ...cardStyle, padding: 22 }}>
-          <div style={{ color: "#64748b", fontWeight: 600, marginBottom: 10 }}>
-            Average Expense
-          </div>
-          <div style={{ fontSize: 32, fontWeight: 800, color: "#0f172a" }}>
-            ₹ {avgExpense.toFixed(2)}
-          </div>
-          <div style={{ color: "#10b981", marginTop: 10, fontWeight: 600 }}>
-            Per entry average
-          </div>
-        </div>
-      </div>
-
-      {isAdmin && (
-        <form
-          onSubmit={submitExpense}
-          style={{
-            ...cardStyle,
-            padding: 28,
-            display: "grid",
-            gap: 18,
-          }}
-        >
+    <div className="page-grid">
+      <section className="glass-card">
+        <div className="hero-strip">
           <div>
-            <h3
-              style={{
-                marginTop: 0,
-                marginBottom: 6,
-                fontSize: 22,
-                color: "#0f172a",
-              }}
-            >
-              Add Expense
-            </h3>
-            <p style={{ margin: 0, color: "#64748b" }}>
-              Add and maintain daily mess expenses by category.
+            <h2 className="page-title">Expense Management</h2>
+            <p className="page-subtitle">
+              Track mess expenses, filter by month, edit records, view category
+              summary, and export reports.
             </p>
           </div>
 
-          <div style={{ display: "grid", gap: 8 }}>
-            <label style={labelStyle}>Expense Title</label>
-            <input
-              style={inputStyle}
-              placeholder="Enter expense title"
-              value={form.title}
-              onChange={(e) => setForm({ ...form, title: e.target.value })}
-            />
+          <div className="hero-kpis">
+            <div className="kpi-pill">Records: {filteredExpenses.length}</div>
+            <div className="kpi-pill">Total: ₹ {total.toFixed(2)}</div>
+            <div className="kpi-pill">Average: ₹ {avgExpense.toFixed(2)}</div>
           </div>
+        </div>
+      </section>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 16,
-            }}
-          >
-            <div style={{ display: "grid", gap: 8 }}>
-              <label style={labelStyle}>Category</label>
-              <select
-                style={inputStyle}
-                value={form.category_id}
-                onChange={(e) => setForm({ ...form, category_id: e.target.value })}
-              >
-                <option value="">Select category</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+      <section className="content-two">
+        <div className="glass-card form-grid">
+          <h3 className="section-title">
+            {editingExpense ? "Edit Expense" : "Add Expense"}
+          </h3>
 
-            <div style={{ display: "grid", gap: 8 }}>
-              <label style={labelStyle}>Amount</label>
+          {isAdmin ? (
+            <form className="form-grid" onSubmit={submitExpense}>
               <input
-                style={inputStyle}
-                type="number"
-                placeholder="Enter amount"
-                value={form.amount}
-                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                className="input"
+                placeholder="Expense title"
+                value={form.title}
+                onChange={(e) => setForm({ ...form, title: e.target.value })}
               />
-            </div>
-          </div>
 
-          <div style={{ display: "grid", gap: 8 }}>
-            <label style={labelStyle}>Expense Date</label>
-            <input
-              style={inputStyle}
-              type="date"
-              value={form.expense_date}
-              onChange={(e) => setForm({ ...form, expense_date: e.target.value })}
-            />
-          </div>
+              <div className="form-row">
+                <select
+                  className="select"
+                  value={form.category_id}
+                  onChange={(e) =>
+                    setForm({ ...form, category_id: e.target.value })
+                  }
+                >
+                  <option value="">Select category</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
 
-          <div>
-            <button type="submit" style={buttonStyle} disabled={saving}>
-              {saving ? "Adding Expense..." : "Add Expense"}
-            </button>
-          </div>
-        </form>
-      )}
+                <input
+                  className="input"
+                  type="number"
+                  placeholder="Amount"
+                  value={form.amount}
+                  onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                />
+              </div>
 
-      <div
-        style={{
-          ...cardStyle,
-          padding: 22,
-          display: "grid",
-          gap: 16,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 14,
-            flexWrap: "wrap",
-          }}
-        >
-          <div>
-            <h3 style={{ margin: 0, color: "#0f172a", fontSize: 22 }}>Expenses</h3>
-            <p style={{ margin: "8px 0 0", color: "#64748b" }}>
-              Search and review all recorded expense entries.
-            </p>
-          </div>
+              <input
+                className="input"
+                type="date"
+                value={form.expense_date}
+                onChange={(e) =>
+                  setForm({ ...form, expense_date: e.target.value })
+                }
+              />
 
-          <div
-            style={{
-              padding: "10px 14px",
-              borderRadius: "999px",
-              background: "rgba(16,185,129,0.12)",
-              color: "#059669",
-              fontWeight: 700,
-              fontSize: 14,
-            }}
-          >
-            Total: ₹ {total.toFixed(2)}
-          </div>
+              <div className="button-group">
+                <button className="button button-primary" type="submit" disabled={saving}>
+                  {saving
+                    ? editingExpense
+                      ? "Updating..."
+                      : "Adding..."
+                    : editingExpense
+                    ? "Update Expense"
+                    : "Add Expense"}
+                </button>
+
+                {editingExpense && (
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    onClick={resetForm}
+                  >
+                    Cancel Edit
+                  </button>
+                )}
+              </div>
+            </form>
+          ) : (
+            <div className="empty-state">Only admin can manage expenses.</div>
+          )}
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) 220px",
-            gap: 16,
-          }}
-        >
+        <div className="glass-card">
+          <h3 className="section-title">Category Summary Cards</h3>
+
+          {summary?.categories?.length ? (
+            <div className="stats-grid">
+              {summary.categories.map((item, index) => (
+                <div key={index} className="stat-card">
+                  <div className="stat-label">{item.category_name}</div>
+                  <div className="stat-value">
+                    ₹ {Number(item.total_amount || 0).toFixed(2)}
+                  </div>
+                  <div className="stat-trend">
+                    {item.count_items || 0} item(s)
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">No summary data available.</div>
+          )}
+        </div>
+      </section>
+
+      <section className="glass-card">
+        <div className="search-row">
           <input
-            style={inputStyle}
+            className="input"
             placeholder="Search by title, category, amount..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
 
           <select
-            style={inputStyle}
+            className="select"
+            value={monthFilter}
+            onChange={(e) => setMonthFilter(e.target.value)}
+            style={{ maxWidth: 150 }}
+          >
+            {Array.from({ length: 12 }, (_, i) => (
+              <option key={i + 1} value={String(i + 1)}>
+                Month {i + 1}
+              </option>
+            ))}
+          </select>
+
+          <input
+            className="input"
+            type="number"
+            placeholder="Year"
+            value={yearFilter}
+            onChange={(e) => setYearFilter(e.target.value)}
+            style={{ maxWidth: 150 }}
+          />
+
+          <select
+            className="select"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
+            style={{ maxWidth: 190 }}
           >
             <option value="all">All Categories</option>
             {categories.map((c) => (
-              <option key={c.id} value={c.id}>
+              <option key={c.id} value={String(c.id)}>
                 {c.name}
               </option>
             ))}
           </select>
+
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={exportExpenses}
+          >
+            Export Expense Report
+          </button>
         </div>
+      </section>
 
-        {loading ? (
-          <div
-            style={{
-              padding: 24,
-              textAlign: "center",
-              color: "#64748b",
-              border: "1px dashed #d9e2ef",
-              borderRadius: 18,
-            }}
-          >
-            Loading expenses...
-          </div>
-        ) : !filteredExpenses.length ? (
-          <div
-            style={{
-              padding: 28,
-              textAlign: "center",
-              color: "#64748b",
-              border: "1px dashed #d9e2ef",
-              borderRadius: 18,
-              background: "rgba(248,250,252,0.8)",
-            }}
-          >
-            No expenses found.
-          </div>
-        ) : (
-          <div
-            style={{
-              overflowX: "auto",
-              border: "1px solid #edf2f7",
-              borderRadius: 18,
-            }}
-          >
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                minWidth: 700,
-                background: "#fff",
-              }}
-            >
-              <thead>
-                <tr style={{ background: "rgba(248,250,252,0.9)" }}>
-                  <th
-                    align="left"
-                    style={{
-                      padding: "16px 18px",
-                      color: "#64748b",
-                      fontSize: 14,
-                      fontWeight: 700,
-                    }}
-                  >
-                    Title
-                  </th>
-                  <th
-                    align="left"
-                    style={{
-                      padding: "16px 18px",
-                      color: "#64748b",
-                      fontSize: 14,
-                      fontWeight: 700,
-                    }}
-                  >
-                    Category
-                  </th>
-                  <th
-                    align="left"
-                    style={{
-                      padding: "16px 18px",
-                      color: "#64748b",
-                      fontSize: 14,
-                      fontWeight: 700,
-                    }}
-                  >
-                    Amount
-                  </th>
-                  <th
-                    align="left"
-                    style={{
-                      padding: "16px 18px",
-                      color: "#64748b",
-                      fontSize: 14,
-                      fontWeight: 700,
-                    }}
-                  >
-                    Date
-                  </th>
+      <section className="glass-card">
+        <h3 className="section-title">Expense Records</h3>
+
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Category</th>
+                <th>Amount</th>
+                <th>Date</th>
+                {isAdmin && <th>Action</th>}
+              </tr>
+            </thead>
+
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={isAdmin ? 5 : 4}>
+                    <div className="empty-state">Loading expenses...</div>
+                  </td>
                 </tr>
-              </thead>
-
-              <tbody>
-                {filteredExpenses.map((item, index) => (
-                  <tr
-                    key={item.id}
-                    style={{
-                      borderTop: "1px solid #eef2f7",
-                      background: index % 2 === 0 ? "#fff" : "#fcfdff",
-                    }}
-                  >
-                    <td
-                      style={{
-                        padding: "16px 18px",
-                        fontWeight: 700,
-                        color: "#0f172a",
-                      }}
-                    >
-                      {item.title}
+              ) : filteredExpenses.length ? (
+                filteredExpenses.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <strong>{item.title}</strong>
                     </td>
+                    <td>{item.category_name || "-"}</td>
+                    <td>₹ {Number(item.amount || 0).toFixed(2)}</td>
+                    <td>{item.expense_date || "-"}</td>
 
-                    <td style={{ padding: "16px 18px" }}>
-                      <span
-                        style={{
-                          ...getCategoryBadge(item.category_name),
-                          padding: "8px 12px",
-                          borderRadius: "999px",
-                          fontSize: 13,
-                          fontWeight: 700,
-                          display: "inline-block",
-                        }}
-                      >
-                        {item.category_name}
-                      </span>
-                    </td>
+                    {isAdmin && (
+                      <td>
+                        <div className="button-group">
+                          <button
+                            className="button button-secondary"
+                            type="button"
+                            onClick={() => startEdit(item)}
+                          >
+                            Edit
+                          </button>
 
-                    <td
-                      style={{
-                        padding: "16px 18px",
-                        fontWeight: 700,
-                        color: "#0f172a",
-                      }}
-                    >
-                      ₹ {Number(item.amount || 0).toFixed(2)}
-                    </td>
-
-                    <td style={{ padding: "16px 18px", color: "#475569" }}>
-                      {item.expense_date}
-                    </td>
+                          <button
+                            className="button button-danger"
+                            type="button"
+                            onClick={() => handleDelete(item.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={isAdmin ? 5 : 4}>
+                    <div className="empty-state">No expenses found.</div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }
