@@ -1,23 +1,31 @@
 import os
 from uuid import uuid4
+from io import BytesIO
 
-from flask import Blueprint, jsonify, request, current_app, send_from_directory
+from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
 from sqlalchemy import extract
-from app.helpers.notifications import create_notification
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.lib import colors
+from reportlab.pdfgen import canvas
+
 from app.models.user import User
 from app.models.attendance import Attendance
 from app.models.bill import Bill
 from app.models.payment import Payment
 from app.models.notification import Notification
 from app.utils.db import db
+from app.services.email_service import (
+    send_bill_generated_email,
+    send_payment_submitted_email,
+    send_payment_approved_email,
+    send_payment_rejected_email,
+)
 
 billing_bp = Blueprint("billing_bp", __name__)
-
-
 def is_admin():
     return get_jwt().get("role") == "admin"
-
 
 def create_notification(title, message, user_id=None, role_target=None, notification_type="general", action_url=None):
     row = Notification(
@@ -31,15 +39,110 @@ def create_notification(title, message, user_id=None, role_target=None, notifica
     db.session.add(row)
 
 
+def generate_bill_pdf(bill, user):
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    pdf.setFont("Helvetica-Bold", 20)
+    pdf.setFillColor(colors.HexColor("#1e40af"))
+    pdf.drawString(20 * mm, height - 20 * mm, "Mess Operations")
+
+    pdf.setFont("Helvetica", 11)
+    pdf.setFillColor(colors.black)
+    pdf.drawString(20 * mm, height - 28 * mm, "Monthly Billing Statement")
+
+    pdf.setStrokeColor(colors.HexColor("#93c5fd"))
+    pdf.setLineWidth(1)
+    pdf.line(20 * mm, height - 32 * mm, 190 * mm, height - 32 * mm)
+
+    y = height - 45 * mm
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(20 * mm, y, "Bill Information")
+    y -= 8 * mm
+
+    pdf.setFont("Helvetica", 11)
+    pdf.drawString(20 * mm, y, f"Bill ID: {bill.id}")
+    y -= 7 * mm
+    pdf.drawString(20 * mm, y, f"Period: {bill.period or f'{bill.month:02d}/{bill.year}'}")
+    y -= 7 * mm
+    pdf.drawString(20 * mm, y, f"Bill Type: {bill.bill_type or 'monthly'}")
+    y -= 7 * mm
+    pdf.drawString(20 * mm, y, f"Status: {bill.status}")
+    y -= 7 * mm
+    pdf.drawString(
+        20 * mm,
+        y,
+        f"Generated On: {bill.created_at.strftime('%d-%m-%Y %H:%M') if bill.created_at else '-'}"
+    )
+
+    y -= 15 * mm
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(20 * mm, y, "User Information")
+    y -= 8 * mm
+
+    pdf.setFont("Helvetica", 11)
+    pdf.drawString(20 * mm, y, f"Name: {user.full_name if user else '-'}")
+    y -= 7 * mm
+    pdf.drawString(20 * mm, y, f"Email: {user.email if user else '-'}")
+    y -= 7 * mm
+    pdf.drawString(20 * mm, y, f"Role: {user.role if user else '-'}")
+
+    y -= 18 * mm
+    pdf.setFillColor(colors.HexColor("#eff6ff"))
+    pdf.roundRect(20 * mm, y - 30 * mm, 170 * mm, 35 * mm, 4 * mm, fill=1, stroke=0)
+
+    pdf.setFillColor(colors.black)
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(25 * mm, y, "Billing Summary")
+
+    pdf.setFont("Helvetica", 11)
+    pdf.drawString(25 * mm, y - 8 * mm, f"Total Meals: {int(bill.total_meals or 0)}")
+    pdf.drawString(25 * mm, y - 16 * mm, f"Per Meal Cost: Rs. {float(bill.per_meal_cost or 0):.2f}")
+    pdf.drawString(25 * mm, y - 24 * mm, f"Total Amount: Rs. {float(bill.total_amount or 0):.2f}")
+
+    pdf.setStrokeColor(colors.HexColor("#cbd5e1"))
+    pdf.line(20 * mm, 20 * mm, 190 * mm, 20 * mm)
+
+    pdf.setFont("Helvetica", 9)
+    pdf.setFillColor(colors.grey)
+    pdf.drawString(20 * mm, 14 * mm, "This is a system-generated bill from Mess Operations.")
+
+    pdf.showPage()
+    pdf.save()
+
+    buffer.seek(0)
+    return buffer
+
+
 def bill_with_payments_dict(bill):
     user = bill.user if hasattr(bill, "user") else User.query.get(bill.user_id)
     payments = [payment.to_dict() for payment in bill.payments] if hasattr(bill, "payments") else []
+
     return {
         **bill.to_dict(),
         "user_name": user.full_name if user else "-",
         "user_email": user.email if user else "-",
         "payments": payments,
     }
+
+
+@billing_bp.route("/users-list", methods=["GET"])
+@jwt_required()
+def billing_users_list():
+    if not is_admin():
+        return jsonify({"message": "Only admin can view users"}), 403
+
+    users = User.query.filter_by(role="user").order_by(User.full_name.asc()).all()
+
+    return jsonify([
+        {
+            "id": user.id,
+            "full_name": user.full_name,
+            "email": user.email,
+        }
+        for user in users
+    ]), 200
 
 
 @billing_bp.route("/", methods=["GET"])
@@ -52,9 +155,8 @@ def list_bills():
         status = (request.args.get("status") or "").strip()
 
         query = Bill.query
-        if is_admin():
-            pass
-        else:
+
+        if not is_admin():
             query = query.filter_by(user_id=current_user_id)
 
         if month:
@@ -153,6 +255,7 @@ def generate_monthly_bills():
                 int(bool(a.breakfast)) + int(bool(a.lunch)) + int(bool(a.dinner))
                 for a in attendance_rows
             )
+
             total_amount = round(total_meals * per_meal_cost, 2)
 
             bill = Bill.query.filter_by(user_id=user.id, month=month, year=year).first()
@@ -189,6 +292,15 @@ def generate_monthly_bills():
                 action_url="/billing",
             )
 
+            # Email send
+            if user.email:
+                send_bill_generated_email(
+                    user_email=user.email,
+                    user_name=user.full_name,
+                    period=f"{month:02d}/{year}",
+                    total_amount=total_amount,
+                )
+
         db.session.commit()
 
         return jsonify({
@@ -199,6 +311,32 @@ def generate_monthly_bills():
         db.session.rollback()
         print("BILL GENERATE ERROR:", str(e))
         return jsonify({"message": f"Failed to generate bills: {str(e)}"}), 500
+
+
+@billing_bp.route("/<int:bill_id>/download-pdf", methods=["GET"])
+@jwt_required()
+def download_bill_pdf(bill_id):
+    try:
+        bill = Bill.query.get_or_404(bill_id)
+
+        if not is_admin() and bill.user_id != int(get_jwt_identity()):
+            return jsonify({"message": "Not allowed"}), 403
+
+        user = bill.user if hasattr(bill, "user") else User.query.get(bill.user_id)
+        pdf_buffer = generate_bill_pdf(bill, user)
+
+        filename = f"bill_{bill.id}_{bill.month or 0:02d}_{bill.year or 0}.pdf"
+
+        return send_file(
+            pdf_buffer,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=filename,
+        )
+
+    except Exception as e:
+        print("DOWNLOAD PDF ERROR:", str(e))
+        return jsonify({"message": f"Failed to download PDF: {str(e)}"}), 500
 
 
 @billing_bp.route("/<int:bill_id>/pay", methods=["POST"])
@@ -249,6 +387,15 @@ def upload_payment(bill_id):
             action_url="/payment-approval",
         )
 
+        # Email send to user
+        user = bill.user if hasattr(bill, "user") else User.query.get(bill.user_id)
+        if user and user.email:
+            send_payment_submitted_email(
+                user_email=user.email,
+                user_name=user.full_name,
+                period=bill.period,
+            )
+
         db.session.commit()
 
         return jsonify({
@@ -266,24 +413,29 @@ def upload_payment(bill_id):
 @billing_bp.route("/payments/pending", methods=["GET"])
 @jwt_required()
 def list_pending_payments():
-    if not is_admin():
-        return jsonify({"message": "Only admin can view pending payments"}), 403
+    try:
+        if not is_admin():
+            return jsonify({"message": "Only admin can view pending payments"}), 403
 
-    payments = Payment.query.filter_by(status="Pending").order_by(Payment.created_at.desc()).all()
+        payments = Payment.query.filter_by(status="Pending").order_by(Payment.created_at.desc()).all()
 
-    result = []
-    for payment in payments:
-        bill = payment.bill
-        user = bill.user if bill else None
+        result = []
+        for payment in payments:
+            bill = payment.bill
+            user = bill.user if bill else None
 
-        result.append({
-            **payment.to_dict(),
-            "bill": bill.to_dict() if bill else None,
-            "user_name": user.full_name if user else "-",
-            "user_email": user.email if user else "-",
-        })
+            result.append({
+                **payment.to_dict(),
+                "bill": bill.to_dict() if bill else None,
+                "user_name": user.full_name if user else "-",
+                "user_email": user.email if user else "-",
+            })
 
-    return jsonify(result), 200
+        return jsonify(result), 200
+
+    except Exception as e:
+        print("PENDING PAYMENTS ERROR:", str(e))
+        return jsonify({"message": f"Failed to load pending payments: {str(e)}"}), 500
 
 
 @billing_bp.route("/payments/<int:payment_id>/approve", methods=["PUT"])
@@ -292,26 +444,45 @@ def approve_payment(payment_id):
     if not is_admin():
         return jsonify({"message": "Only admin can approve payments"}), 403
 
-    payment = Payment.query.get_or_404(payment_id)
-    data = request.get_json() or {}
-    admin_remark = (data.get("admin_remark") or "").strip()
+    try:
+        payment = Payment.query.get_or_404(payment_id)
+        data = request.get_json(silent=True) or {}
+        admin_remark = (data.get("admin_remark") or "Payment approved").strip()
 
-    payment.status = "Approved"
-    payment.admin_remark = admin_remark or None
+        payment.status = "Approved"
+        payment.admin_remark = admin_remark
 
-    if payment.bill:
-        payment.bill.status = "Paid"
-        create_notification(
-            title="Payment Approved",
-            message=f"Your payment for bill {payment.bill.period} has been approved.",
-            user_id=payment.bill.user_id,
-            notification_type="payment_approved",
-            action_url="/billing",
-        )
+        if payment.bill:
+            payment.bill.status = "Paid"
 
-    db.session.commit()
+            create_notification(
+                title="Payment Approved",
+                message=f"Your payment for bill {payment.bill.period} has been approved.",
+                user_id=payment.bill.user_id,
+                notification_type="payment_approved",
+                action_url="/billing",
+            )
 
-    return jsonify({"message": "Payment approved successfully"}), 200
+            # Email send
+            user = payment.bill.user if hasattr(payment.bill, "user") else User.query.get(payment.bill.user_id)
+            if user and user.email:
+                send_payment_approved_email(
+                    user_email=user.email,
+                    user_name=user.full_name,
+                    period=payment.bill.period,
+                )
+
+        db.session.commit()
+
+        return jsonify({
+            "message": "Payment approved successfully",
+            "payment": payment.to_dict(),
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print("APPROVE PAYMENT ERROR:", str(e))
+        return jsonify({"message": f"Failed to approve payment: {str(e)}"}), 500
 
 
 @billing_bp.route("/payments/<int:payment_id>/reject", methods=["PUT"])
@@ -320,77 +491,43 @@ def reject_payment(payment_id):
     if not is_admin():
         return jsonify({"message": "Only admin can reject payments"}), 403
 
-    payment = Payment.query.get_or_404(payment_id)
-    data = request.get_json() or {}
-    admin_remark = (data.get("admin_remark") or "").strip()
+    try:
+        payment = Payment.query.get_or_404(payment_id)
+        data = request.get_json(silent=True) or {}
+        admin_remark = (data.get("admin_remark") or "Payment rejected").strip()
 
-    payment.status = "Rejected"
-    payment.admin_remark = admin_remark or None
+        payment.status = "Rejected"
+        payment.admin_remark = admin_remark
 
-    if payment.bill:
-        payment.bill.status = "Unpaid"
-        create_notification(
-            title="Payment Rejected",
-            message=f"Your payment for bill {payment.bill.period} was rejected. Remark: {payment.admin_remark or 'No remark'}",
-            user_id=payment.bill.user_id,
-            notification_type="payment_rejected",
-            action_url="/billing",
-        )
+        if payment.bill:
+            payment.bill.status = "Unpaid"
 
-    db.session.commit()
+            create_notification(
+                title="Payment Rejected",
+                message=f"Your payment for bill {payment.bill.period} was rejected. Reason: {admin_remark}",
+                user_id=payment.bill.user_id,
+                notification_type="payment_rejected",
+                action_url="/billing",
+            )
 
-    return jsonify({"message": "Payment rejected successfully"}), 200
+            # Email send
+            user = payment.bill.user if hasattr(payment.bill, "user") else User.query.get(payment.bill.user_id)
+            if user and user.email:
+                send_payment_rejected_email(
+                    user_email=user.email,
+                    user_name=user.full_name,
+                    period=payment.bill.period,
+                    reason=admin_remark,
+                )
 
+        db.session.commit()
 
-@billing_bp.route("/payments/<int:payment_id>", methods=["GET"])
-@jwt_required()
-def get_payment(payment_id):
-    payment = Payment.query.get_or_404(payment_id)
+        return jsonify({
+            "message": "Payment rejected successfully",
+            "payment": payment.to_dict(),
+        }), 200
 
-    if not is_admin():
-        bill = payment.bill
-        if not bill or bill.user_id != int(get_jwt_identity()):
-            return jsonify({"message": "Not allowed"}), 403
-
-    bill = payment.bill
-    user = bill.user if bill else None
-
-    return jsonify({
-        **payment.to_dict(),
-        "bill": bill.to_dict() if bill else None,
-        "user_name": user.full_name if user else "-",
-        "user_email": user.email if user else "-",
-    }), 200
-
-
-@billing_bp.route("/payments/<int:payment_id>", methods=["DELETE"])
-@jwt_required()
-def delete_payment(payment_id):
-    if not is_admin():
-        return jsonify({"message": "Only admin can delete payment entries"}), 403
-
-    payment = Payment.query.get_or_404(payment_id)
-    proof_filename = payment.proof_filename
-
-    if payment.bill and payment.status != "Approved":
-        payment.bill.status = "Unpaid"
-
-    db.session.delete(payment)
-    db.session.commit()
-
-    if proof_filename:
-        upload_folder = current_app.config.get("UPLOAD_FOLDER", "uploads")
-        file_path = os.path.join(upload_folder, proof_filename)
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
-
-    return jsonify({"message": "Payment record deleted successfully"}), 200
-
-
-@billing_bp.route("/uploads/<path:filename>", methods=["GET"])
-def get_uploaded_file(filename):
-    upload_folder = current_app.config.get("UPLOAD_FOLDER", "uploads")
-    return send_from_directory(upload_folder, filename)
+    except Exception as e:
+        db.session.rollback()
+        print("REJECT PAYMENT ERROR:", str(e))
+        return jsonify({"message": f"Failed to reject payment: {str(e)}"}), 500

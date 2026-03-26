@@ -4,14 +4,15 @@ from flask_cors import CORS
 from werkzeug.security import generate_password_hash
 
 from app.config import Config
-from app.utils.db import db, jwt
+from app.utils.db import db, jwt, bcrypt, mail
 from app.models.user import User
 from app.models.expense import ExpenseCategory
+from app.scheduler import start_scheduler
 
 
-def seed_admin_and_categories():
-    admin_email = "dhruvtandel8068@gmail.com"
-    admin_password = "Dhruv@8068"
+def seed_admin_and_categories(app):
+    admin_email = app.config.get("ADMIN_EMAIL")
+    admin_password = app.config.get("ADMIN_PASSWORD")
 
     existing = User.query.filter_by(email=admin_email).first()
     if not existing:
@@ -65,8 +66,9 @@ def create_app():
 
     db.init_app(app)
     jwt.init_app(app)
+    bcrypt.init_app(app)
+    mail.init_app(app)
 
-    # Import routes here to avoid circular imports
     from app.routes.auth_routes import auth_bp
     from app.routes.user_routes import user_bp
     from app.routes.expense_routes import expense_bp
@@ -77,7 +79,6 @@ def create_app():
     from app.routes.notification_routes import notification_bp
     from app.routes.billing_routes import billing_bp
 
-    # Register blueprints
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(user_bp, url_prefix="/api")
     app.register_blueprint(expense_bp, url_prefix="/api/expenses")
@@ -93,7 +94,6 @@ def create_app():
         return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
     with app.app_context():
-        # Import all models so SQLAlchemy knows them before create_all()
         from app.models.attendance import Attendance
         from app.models.bill import Bill
         from app.models.menu import MenuItem
@@ -104,6 +104,9 @@ def create_app():
         from app.models.expense import Expense
 
         db.create_all()
-        seed_admin_and_categories()
+        seed_admin_and_categories(app)
+
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
+        start_scheduler(app)
 
     return app
