@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import QRCode from "react-qr-code";
 import api from "../services/api";
 
 export default function Billing() {
@@ -9,6 +10,9 @@ export default function Billing() {
   const [paymentFile, setPaymentFile] = useState({});
   const [paymentNote, setPaymentNote] = useState({});
   const [generating, setGenerating] = useState(false);
+
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [selectedBill, setSelectedBill] = useState(null);
 
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const isAdmin = user?.role === "admin";
@@ -21,6 +25,10 @@ export default function Billing() {
   const [perMealCost, setPerMealCost] = useState(1000);
   const [billingType, setBillingType] = useState("all");
   const [selectedUserId, setSelectedUserId] = useState("");
+
+  // Put your real UPI ID here
+  const UPI_ID = "dhruvtandel8068@okaxis";
+  const PAYEE_NAME = "MessMate Pro";
 
   const loadBills = async () => {
     try {
@@ -124,12 +132,40 @@ export default function Billing() {
     setPaymentNote((prev) => ({ ...prev, [billId]: note }));
   };
 
+  const openQrModal = (bill) => {
+    setSelectedBill(bill);
+    setShowQrModal(true);
+  };
+
+  const closeQrModal = () => {
+    setShowQrModal(false);
+    setSelectedBill(null);
+  };
+
+  const buildUpiLink = (bill) => {
+    const amount = Number(bill?.total_amount || 0).toFixed(2);
+    const note = `Mess Bill ${bill?.period || ""}`;
+    return `upi://pay?pa=${encodeURIComponent(
+      UPI_ID
+    )}&pn=${encodeURIComponent(PAYEE_NAME)}&am=${encodeURIComponent(
+      amount
+    )}&cu=INR&tn=${encodeURIComponent(note)}`;
+  };
+
+  const handleOpenUpiApp = () => {
+    if (!selectedBill) return;
+    const upiLink = buildUpiLink(selectedBill);
+    window.location.href = upiLink;
+  };
+
   const handlePaymentSubmit = async (billId) => {
     try {
       const formData = new FormData();
+
       if (paymentFile[billId]) {
         formData.append("proof", paymentFile[billId]);
       }
+
       formData.append("note", paymentNote[billId] || "");
       formData.append("mode", "UPI");
 
@@ -142,6 +178,7 @@ export default function Billing() {
       alert("Payment proof submitted successfully");
       setPaymentFile((prev) => ({ ...prev, [billId]: null }));
       setPaymentNote((prev) => ({ ...prev, [billId]: "" }));
+      closeQrModal();
       loadData();
     } catch (error) {
       console.error(error);
@@ -180,7 +217,10 @@ export default function Billing() {
     const totalBills = bills.length;
     const paidBills = bills.filter((b) => b.status === "Paid").length;
     const unpaidBills = bills.filter((b) => b.status === "Unpaid").length;
-    const pendingBills = bills.filter((b) => b.status === "Pending Approval").length;
+    const pendingBills = bills.filter(
+      (b) => b.status === "Pending Approval"
+    ).length;
+
     return { totalBills, paidBills, unpaidBills, pendingBills };
   }, [bills]);
 
@@ -255,9 +295,7 @@ export default function Billing() {
               value={billingType}
               onChange={(e) => {
                 setBillingType(e.target.value);
-                if (e.target.value === "all") {
-                  setSelectedUserId("");
-                }
+                if (e.target.value === "all") setSelectedUserId("");
               }}
               style={styles.input}
             >
@@ -321,8 +359,12 @@ export default function Billing() {
                     {isAdmin && <td style={styles.tdLeft}>{bill.user_name}</td>}
                     <td style={styles.tdLeft}>{bill.period}</td>
                     <td style={styles.tdCenter}>{bill.total_meals}</td>
-                    <td style={styles.tdCenter}>₹{Number(bill.per_meal_cost || 0).toFixed(2)}</td>
-                    <td style={styles.tdCenter}>₹{Number(bill.total_amount || 0).toFixed(2)}</td>
+                    <td style={styles.tdCenter}>
+                      ₹{Number(bill.per_meal_cost || 0).toFixed(2)}
+                    </td>
+                    <td style={styles.tdCenter}>
+                      ₹{Number(bill.total_amount || 0).toFixed(2)}
+                    </td>
                     <td style={styles.tdCenter}>
                       <div style={styles.centerBox}>
                         <span
@@ -353,27 +395,12 @@ export default function Billing() {
                     {!isAdmin && (
                       <td style={styles.tdCenter}>
                         {bill.status === "Unpaid" ? (
-                          <div style={styles.paymentBox}>
-                            <input
-                              type="file"
-                              accept="image/*,.pdf"
-                              onChange={(e) =>
-                                handleFileChange(bill.id, e.target.files?.[0] || null)
-                              }
-                              style={styles.fileInput}
-                            />
-                            <input
-                              type="text"
-                              placeholder="Payment note"
-                              value={paymentNote[bill.id] || ""}
-                              onChange={(e) => handleNoteChange(bill.id, e.target.value)}
-                              style={styles.input}
-                            />
+                          <div style={styles.payBtnBox}>
                             <button
-                              onClick={() => handlePaymentSubmit(bill.id)}
+                              onClick={() => openQrModal(bill)}
                               style={styles.primaryBtn}
                             >
-                              Submit Payment
+                              Pay Now
                             </button>
                           </div>
                         ) : (
@@ -434,6 +461,72 @@ export default function Billing() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {showQrModal && selectedBill && (
+        <div style={styles.modalOverlay} onClick={closeQrModal}>
+          <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h3 style={{ margin: 0 }}>Pay Bill - {selectedBill.period}</h3>
+              <button onClick={closeQrModal} style={styles.closeBtn}>
+                ×
+              </button>
+            </div>
+
+            <p style={styles.modalText}>
+              Scan this QR code to pay to your UPI ID. The bill amount will be filled automatically on the user's mobile.
+            </p>
+
+            <div style={styles.qrWrap}>
+              <QRCode
+                value={buildUpiLink(selectedBill)}
+                size={220}
+                bgColor="#ffffff"
+                fgColor="#111827"
+              />
+            </div>
+
+            <div style={styles.amountBox}>
+              <span>Total Amount:</span>
+              <strong>
+                ₹{Number(selectedBill.total_amount || 0).toFixed(2)}
+              </strong>
+            </div>
+
+            <button
+              onClick={handleOpenUpiApp}
+              style={{ ...styles.secondaryBtn, width: "100%", marginBottom: "12px" }}
+            >
+              Open UPI App
+            </button>
+
+            <input
+              type="file"
+              accept="image/*,.pdf"
+              onChange={(e) =>
+                handleFileChange(selectedBill.id, e.target.files?.[0] || null)
+              }
+              style={styles.fileInput}
+            />
+
+            <input
+              type="text"
+              placeholder="Payment note / UPI reference"
+              value={paymentNote[selectedBill.id] || ""}
+              onChange={(e) =>
+                handleNoteChange(selectedBill.id, e.target.value)
+              }
+              style={styles.input}
+            />
+
+            <button
+              onClick={() => handlePaymentSubmit(selectedBill.id)}
+              style={{ ...styles.primaryBtn, width: "100%" }}
+            >
+              Submit Payment Proof
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -500,6 +593,7 @@ const styles = {
     borderRadius: "10px",
     border: "1px solid #cbd5e1",
     minWidth: "140px",
+    outline: "none",
   },
   primaryBtn: {
     background: "#2563eb",
@@ -508,14 +602,16 @@ const styles = {
     borderRadius: "10px",
     padding: "10px 16px",
     cursor: "pointer",
+    fontWeight: "600",
   },
   secondaryBtn: {
     background: "#e0f2fe",
     color: "#075985",
     border: "none",
     borderRadius: "10px",
-    padding: "8px 12px",
+    padding: "10px 16px",
     cursor: "pointer",
+    fontWeight: "600",
   },
   successBtn: {
     background: "#16a34a",
@@ -569,6 +665,11 @@ const styles = {
     justifyContent: "center",
     alignItems: "center",
   },
+  payBtnBox: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+  },
   emptyCell: {
     textAlign: "center",
     padding: "20px",
@@ -596,14 +697,9 @@ const styles = {
     background: "#fef3c7",
     color: "#92400e",
   },
-  paymentBox: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px",
-    minWidth: "220px",
-  },
   fileInput: {
     fontSize: "13px",
+    marginBottom: "12px",
   },
   muted: {
     color: "#64748b",
@@ -629,5 +725,61 @@ const styles = {
     textDecoration: "none",
     display: "inline-block",
     marginTop: "8px",
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.55)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 9999,
+    padding: "16px",
+  },
+  modalCard: {
+    background: "#ffffff",
+    width: "100%",
+    maxWidth: "460px",
+    borderRadius: "22px",
+    padding: "22px",
+    boxShadow: "0 20px 60px rgba(15,23,42,0.25)",
+  },
+  modalHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "12px",
+  },
+  closeBtn: {
+    border: "none",
+    background: "transparent",
+    fontSize: "28px",
+    cursor: "pointer",
+    color: "#334155",
+    lineHeight: 1,
+  },
+  modalText: {
+    color: "#64748b",
+    marginBottom: "16px",
+  },
+  qrWrap: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    background: "#f8fafc",
+    borderRadius: "18px",
+    padding: "16px",
+    marginBottom: "16px",
+  },
+  amountBox: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    background: "#eff6ff",
+    border: "1px solid #bfdbfe",
+    borderRadius: "14px",
+    padding: "12px 14px",
+    marginBottom: "14px",
+    color: "#1e3a8a",
   },
 };

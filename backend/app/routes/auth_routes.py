@@ -1,11 +1,12 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required, get_jwt_identity
-from flask_jwt_extended import create_access_token
+from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from app.models.user import User
 from app.utils.db import db
+from app.utils.email_service import send_email
+
 auth_bp = Blueprint("auth_bp", __name__)
 
 
@@ -15,48 +16,99 @@ def build_token(user):
         additional_claims={"role": user.role, "email": user.email},
         expires_delta=timedelta(days=7),
     )
+
+
 @auth_bp.post("/register")
 def register():
-    data = request.get_json() or {}
-    full_name = (data.get("full_name") or "").strip()
-    email = (data.get("email") or "").strip().lower()
-    password = data.get("password") or ""
-    contact = (data.get("contact") or "").strip()
-    room_no = (data.get("room_no") or "").strip()
+    try:
+        data = request.get_json() or {}
 
-    if not full_name or not email or not password:
-        return jsonify({"message": "Full name, email and password are required"}), 400
+        full_name = (data.get("full_name") or "").strip()
+        email = (data.get("email") or "").strip().lower()
+        password = data.get("password") or ""
+        contact = (data.get("contact") or "").strip()
+        room_no = (data.get("room_no") or "").strip()
 
-    if User.query.filter_by(email=email).first():
-        return jsonify({"message": "Email already registered"}), 409
+        if not full_name or not email or not password:
+            return jsonify({"message": "Full name, email and password are required"}), 400
 
-    user = User(
-        full_name=full_name,
-        email=email,
-        password_hash=generate_password_hash(password),
-        role="user",
-        contact=contact or None,
-        room_no=room_no or None,
-        must_change_password=False,
-    )
-    db.session.add(user)
-    db.session.commit()
+        if User.query.filter_by(email=email).first():
+            return jsonify({"message": "Email already registered"}), 409
 
-    token = build_token(user)
-    return jsonify({"message": "Registration successful", "token": token, "user": user.to_dict()}), 201
+        user = User(
+            full_name=full_name,
+            email=email,
+            password_hash=generate_password_hash(password),
+            role="user",
+            contact=contact or None,
+            room_no=room_no or None,
+            must_change_password=False,
+        )
+
+        db.session.add(user)
+        db.session.commit()
+
+        email_sent = send_email(
+            subject="Welcome to MessMate Pro - Account Created Successfully",
+            recipients=user.email,
+            body=f"""
+Hello {user.full_name},
+
+Your account has been created successfully.
+
+You can now log in to MessMate Pro and use the system.
+
+Thank you,
+MessMate Pro Team
+""",
+            html=f"""
+<h2>Welcome to MessMate Pro</h2>
+<p>Hello <b>{user.full_name}</b>,</p>
+<p>Your account has been created successfully.</p>
+<p>You can now log in and use the system.</p>
+<p><b>Email:</b> {user.email}</p>
+<br>
+<p>Thank you,<br>MessMate Pro Team</p>
+"""
+        )
+
+        token = build_token(user)
+
+        return jsonify({
+            "message": "Registration successful",
+            "email_sent": email_sent,
+            "token": token,
+            "user": user.to_dict()
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        print("REGISTER ERROR:", str(e))
+        return jsonify({"message": f"Registration failed: {str(e)}"}), 500
+
 
 @auth_bp.post("/login")
 def login():
-    data = request.get_json() or {}
-    email = (data.get("email") or "").strip().lower()
-    password = data.get("password") or ""
+    try:
+        data = request.get_json() or {}
 
-    user = User.query.filter_by(email=email).first()
-    if not user or not user.check_password(password):
-        return jsonify({"message": "Invalid email or password"}), 401
+        email = (data.get("email") or "").strip().lower()
+        password = data.get("password") or ""
 
-    token = build_token(user)
-    return jsonify({"message": "Login successful", "token": token, "user": user.to_dict()})
+        user = User.query.filter_by(email=email).first()
+        if not user or not user.check_password(password):
+            return jsonify({"message": "Invalid email or password"}), 401
+
+        token = build_token(user)
+        return jsonify({
+            "message": "Login successful",
+            "token": token,
+            "user": user.to_dict()
+        }), 200
+
+    except Exception as e:
+        print("LOGIN ERROR:", str(e))
+        return jsonify({"message": f"Login failed: {str(e)}"}), 500
 
 
 @auth_bp.route("/change-password", methods=["PUT"])
@@ -97,4 +149,3 @@ def change_password():
         db.session.rollback()
         print("CHANGE PASSWORD ERROR:", str(e))
         return jsonify({"message": f"Failed to change password: {str(e)}"}), 500
-    return _inner()

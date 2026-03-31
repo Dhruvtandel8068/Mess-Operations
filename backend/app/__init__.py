@@ -78,6 +78,7 @@ def create_app():
     from app.routes.complaint_routes import complaint_bp
     from app.routes.notification_routes import notification_bp
     from app.routes.billing_routes import billing_bp
+    from app.routes.attendance_routes import attendance_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(user_bp, url_prefix="/api")
@@ -88,6 +89,7 @@ def create_app():
     app.register_blueprint(complaint_bp, url_prefix="/api/complaints")
     app.register_blueprint(notification_bp, url_prefix="/api/notifications")
     app.register_blueprint(billing_bp, url_prefix="/api/billing")
+    app.register_blueprint(attendance_bp, url_prefix="/api")
 
     @app.get("/api/uploads/<path:filename>")
     def uploaded_file(filename):

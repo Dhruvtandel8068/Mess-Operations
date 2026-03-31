@@ -1,6 +1,8 @@
 from datetime import date
+from io import BytesIO
 
-from flask import Blueprint, jsonify, request
+import pandas as pd
+from flask import Blueprint, jsonify, request, send_file
 from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
 from sqlalchemy import extract
 
@@ -112,6 +114,124 @@ def get_summary():
     except Exception as e:
         print("REPORT SUMMARY ERROR:", str(e))
         return jsonify({"message": f"Failed to load summary: {str(e)}"}), 500
+
+
+@report_bp.route("/export-attendance", methods=["GET"])
+@jwt_required()
+def export_attendance_excel():
+    try:
+        if not is_admin():
+            return jsonify({"message": "Only admin can export attendance"}), 403
+
+        rows = Attendance.query.order_by(Attendance.date.desc(), Attendance.id.desc()).all()
+
+        data = []
+        for row in rows:
+            user = User.query.get(row.user_id)
+            meal_count = int(bool(row.breakfast)) + int(bool(row.lunch)) + int(bool(row.dinner))
+            data.append({
+                "User Name": user.full_name if user else "-",
+                "Email": user.email if user else "-",
+                "Date": str(row.date),
+                "Breakfast": "Yes" if row.breakfast else "No",
+                "Lunch": "Yes" if row.lunch else "No",
+                "Dinner": "Yes" if row.dinner else "No",
+                "Meal Count": meal_count,
+            })
+
+        df = pd.DataFrame(data)
+        output = BytesIO()
+
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Attendance")
+
+        output.seek(0)
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name="attendance-report.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    except Exception as e:
+        print("EXPORT ATTENDANCE ERROR:", str(e))
+        return jsonify({"message": f"Failed to export attendance: {str(e)}"}), 500
+
+
+@report_bp.route("/export-expenses", methods=["GET"])
+@jwt_required()
+def export_expenses_excel():
+    try:
+        if not is_admin():
+            return jsonify({"message": "Only admin can export expenses"}), 403
+
+        rows = Expense.query.order_by(Expense.expense_date.desc(), Expense.id.desc()).all()
+
+        data = []
+        for row in rows:
+            category = ExpenseCategory.query.get(row.category_id) if row.category_id else None
+            data.append({
+                "Title": row.title,
+                "Category": category.name if category else "-",
+                "Amount": float(row.amount or 0),
+                "Expense Date": str(row.expense_date),
+            })
+
+        df = pd.DataFrame(data)
+        output = BytesIO()
+
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Expenses")
+
+        output.seek(0)
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name="expense-report.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    except Exception as e:
+        print("EXPORT EXPENSES ERROR:", str(e))
+        return jsonify({"message": f"Failed to export expenses: {str(e)}"}), 500
+
+
+@report_bp.route("/export-users", methods=["GET"])
+@jwt_required()
+def export_users_excel():
+    try:
+        if not is_admin():
+            return jsonify({"message": "Only admin can export users"}), 403
+
+        rows = User.query.order_by(User.id.desc()).all()
+
+        data = []
+        for row in rows:
+            data.append({
+                "ID": row.id,
+                "Full Name": row.full_name,
+                "Email": row.email,
+                "Role": row.role,
+                "Created At": str(row.created_at) if getattr(row, "created_at", None) else "-",
+            })
+
+        df = pd.DataFrame(data)
+        output = BytesIO()
+
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Users")
+
+        output.seek(0)
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name="users-report.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    except Exception as e:
+        print("EXPORT USERS ERROR:", str(e))
+        return jsonify({"message": f"Failed to export users: {str(e)}"}), 500
 
 
 @report_bp.route("/charts/expenses", methods=["GET"])

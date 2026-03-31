@@ -71,6 +71,35 @@ export default function Reports() {
     doc.save("mess-operations-report.pdf");
   };
 
+  const downloadFile = async (url, filename) => {
+    try {
+      const response = await fetch(`http://127.0.0.1:5000/api${url}`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Download failed");
+      }
+
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      console.error(error);
+      alert("Failed to download file");
+    }
+  };
+
   return (
     <div className="page-grid">
       <section className="glass-card">
@@ -78,13 +107,34 @@ export default function Reports() {
           <div>
             <h2 className="page-title">Reports & Analytics</h2>
             <p className="page-subtitle">
-              View system summary and export a professional PDF report for admin records.
+              View system summary and export PDF or Excel reports for admin records.
             </p>
           </div>
 
           <div className="button-group">
             <button className="button button-primary" onClick={exportPDF} type="button">
               Export PDF
+            </button>
+            <button
+              className="button button-secondary"
+              type="button"
+              onClick={() => downloadFile("/reports/export-attendance", "attendance-report.xlsx")}
+            >
+              Export Attendance Excel
+            </button>
+            <button
+              className="button button-secondary"
+              type="button"
+              onClick={() => downloadFile("/reports/export-expenses", "expense-report.xlsx")}
+            >
+              Export Expense Excel
+            </button>
+            <button
+              className="button button-secondary"
+              type="button"
+              onClick={() => downloadFile("/reports/export-users", "users-report.xlsx")}
+            >
+              Export Users Excel
             </button>
           </div>
         </div>

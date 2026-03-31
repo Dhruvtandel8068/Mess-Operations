@@ -8,6 +8,9 @@ export default function Attendance() {
   const [rows, setRows] = useState([]);
   const [users, setUsers] = useState([]);
   const [search, setSearch] = useState("");
+  const [cutoffs, setCutoffs] = useState(null);
+  const [loading, setLoading] = useState(true);
+
   const [form, setForm] = useState({
     user_id: "",
     date: new Date().toISOString().slice(0, 10),
@@ -20,42 +23,77 @@ export default function Attendance() {
     loadData();
   }, []);
 
-  const loadData = async () => {
-    const attendance = await getData("/attendance");
-    setRows(attendance);
-
+  useEffect(() => {
     if (isAdmin) {
-      const usersRes = await getData("/users");
-      const normalUsers = usersRes.filter((u) => u.role === "user");
-      setUsers(normalUsers);
-      if (!form.user_id && normalUsers.length) {
-        setForm((prev) => ({ ...prev, user_id: normalUsers[0].id }));
+      loadCutoffs(form.date);
+    }
+  }, [form.date, isAdmin]);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+
+      const attendance = await getData("/attendance");
+      setRows(attendance || []);
+
+      if (isAdmin) {
+        const usersRes = await getData("/users");
+        const normalUsers = (usersRes || []).filter((u) => u.role === "user");
+        setUsers(normalUsers);
+
+        if (!form.user_id && normalUsers.length) {
+          setForm((prev) => ({ ...prev, user_id: normalUsers[0].id }));
+        }
       }
+    } catch (error) {
+      console.error("Failed to load attendance data", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadCutoffs = async (selectedDate) => {
+    try {
+      const data = await getData(`/attendance/cutoffs?date=${selectedDate}`);
+      setCutoffs(data);
+    } catch (error) {
+      console.error("Failed to load cutoffs", error);
     }
   };
 
   const saveAttendance = async (e) => {
     e.preventDefault();
 
+    if (!isAdmin) {
+      alert("Only admin can mark attendance");
+      return;
+    }
+
     const payload = {
+      user_id: form.user_id,
       date: form.date,
       breakfast: form.breakfast,
       lunch: form.lunch,
       dinner: form.dinner,
     };
 
-    if (isAdmin) payload.user_id = form.user_id;
+    try {
+      await postData("/attendance", payload);
 
-    await postData("/attendance", payload);
+      setForm((prev) => ({
+        ...prev,
+        breakfast: false,
+        lunch: false,
+        dinner: false,
+      }));
 
-    setForm((prev) => ({
-      ...prev,
-      breakfast: false,
-      lunch: false,
-      dinner: false,
-    }));
-
-    loadData();
+      await loadData();
+      await loadCutoffs(form.date);
+      alert("Attendance saved successfully");
+    } catch (error) {
+      console.error(error);
+      alert(error?.response?.data?.message || "Failed to save attendance");
+    }
   };
 
   const filteredRows = useMemo(() => {
@@ -64,20 +102,33 @@ export default function Attendance() {
     );
   }, [rows, search]);
 
+  if (loading) {
+    return (
+      <div className="page-grid">
+        <section className="glass-card">
+          <h2 className="page-title">Attendance Management</h2>
+          <p className="page-subtitle">Loading attendance data...</p>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="page-grid">
       <section className="glass-card">
         <h2 className="page-title">Attendance Management</h2>
         <p className="page-subtitle">
-          Track breakfast, lunch, and dinner attendance with a cleaner workflow.
+          {isAdmin
+            ? "Admin can mark breakfast, lunch, and dinner attendance for users."
+            : "View your attendance history. Only admin can mark attendance."}
         </p>
       </section>
 
       <section className="content-two">
-        <form className="glass-card form-grid" onSubmit={saveAttendance}>
-          <h3 className="section-title">Mark Attendance</h3>
+        {isAdmin ? (
+          <form className="glass-card form-grid" onSubmit={saveAttendance}>
+            <h3 className="section-title">Mark Attendance</h3>
 
-          {isAdmin && (
             <select
               className="select"
               value={form.user_id}
@@ -89,56 +140,84 @@ export default function Attendance() {
                 </option>
               ))}
             </select>
-          )}
 
-          <input
-            className="input"
-            type="date"
-            value={form.date}
-            onChange={(e) => setForm({ ...form, date: e.target.value })}
-          />
+            <input
+              className="input"
+              type="date"
+              value={form.date}
+              onChange={(e) => setForm({ ...form, date: e.target.value })}
+            />
 
-          <div className="checkbox-row">
-            <label className="checkbox-card">
-              <input
-                type="checkbox"
-                checked={form.breakfast}
-                onChange={(e) =>
-                  setForm({ ...form, breakfast: e.target.checked })
-                }
-              />
-              Breakfast
-            </label>
+            <div className="stats-grid">
+              <div className="stat-card">
+                <div className="stat-label">Breakfast Cutoff</div>
+                <div className="stat-value" style={{ fontSize: "1rem" }}>
+                  {cutoffs?.breakfast || "09:00"}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Lunch Cutoff</div>
+                <div className="stat-value" style={{ fontSize: "1rem" }}>
+                  {cutoffs?.lunch || "13:00"}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Dinner Cutoff</div>
+                <div className="stat-value" style={{ fontSize: "1rem" }}>
+                  {cutoffs?.dinner || "21:00"}
+                </div>
+              </div>
+            </div>
 
-            <label className="checkbox-card">
-              <input
-                type="checkbox"
-                checked={form.lunch}
-                onChange={(e) => setForm({ ...form, lunch: e.target.checked })}
-              />
-              Lunch
-            </label>
+            <div className="checkbox-row">
+              <label className="checkbox-card">
+                <input
+                  type="checkbox"
+                  checked={form.breakfast}
+                  onChange={(e) =>
+                    setForm({ ...form, breakfast: e.target.checked })
+                  }
+                />
+                Breakfast
+              </label>
 
-            <label className="checkbox-card">
-              <input
-                type="checkbox"
-                checked={form.dinner}
-                onChange={(e) => setForm({ ...form, dinner: e.target.checked })}
-              />
-              Dinner
-            </label>
-          </div>
+              <label className="checkbox-card">
+                <input
+                  type="checkbox"
+                  checked={form.lunch}
+                  onChange={(e) => setForm({ ...form, lunch: e.target.checked })}
+                />
+                Lunch
+              </label>
 
-          <button className="button button-primary" type="submit">
-            Save Attendance
-          </button>
-        </form>
+              <label className="checkbox-card">
+                <input
+                  type="checkbox"
+                  checked={form.dinner}
+                  onChange={(e) => setForm({ ...form, dinner: e.target.checked })}
+                />
+                Dinner
+              </label>
+            </div>
+
+            <button className="button button-primary" type="submit">
+              Save Attendance
+            </button>
+          </form>
+        ) : (
+          <section className="glass-card">
+            <h3 className="section-title">Your Access</h3>
+            <div className="empty-state">
+              You can only view your own attendance. Attendance can be marked only by admin.
+            </div>
+          </section>
+        )}
 
         <section className="glass-card">
           <h3 className="section-title">Quick Overview</h3>
           <div className="stats-grid">
             <div className="stat-card">
-              <div className="stat-label">Records</div>
+              <div className="stat-label">{isAdmin ? "Total Records" : "Your Records"}</div>
               <div className="stat-value">{rows.length}</div>
             </div>
             <div className="stat-card">
@@ -155,7 +234,7 @@ export default function Attendance() {
         <div className="search-row">
           <input
             className="input"
-            placeholder="Search by student name or date..."
+            placeholder={isAdmin ? "Search by student name or date..." : "Search by date..."}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -163,7 +242,10 @@ export default function Attendance() {
       </section>
 
       <section className="glass-card">
-        <h3 className="section-title">Attendance History</h3>
+        <h3 className="section-title">
+          {isAdmin ? "Attendance History" : "My Attendance History"}
+        </h3>
+
         <div className="table-wrap">
           <table className="table">
             <thead>
@@ -179,7 +261,9 @@ export default function Attendance() {
             <tbody>
               {filteredRows.map((row) => (
                 <tr key={row.id}>
-                  <td><strong>{row.user_name}</strong></td>
+                  <td>
+                    <strong>{row.user_name}</strong>
+                  </td>
                   <td>{row.date}</td>
                   <td>{row.breakfast ? "Yes" : "No"}</td>
                   <td>{row.lunch ? "Yes" : "No"}</td>
