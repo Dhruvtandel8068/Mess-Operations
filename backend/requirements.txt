@@ -27,3 +27,4 @@ gunicorn==23.0.0
 pandas==2.2.3
 openpyxl==3.1.5
 reportlab==4.2.5
+razorpay==1.4.2
