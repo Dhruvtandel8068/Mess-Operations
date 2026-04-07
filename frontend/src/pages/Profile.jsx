@@ -77,20 +77,26 @@ export default function Profile() {
     }
   };
 
+  const firstLetter = (profile?.full_name || profile?.email || "U").charAt(0).toUpperCase();
+
   return (
     <div className="page-grid">
       <section className="glass-card">
-        <div className="hero-strip">
-          <div>
-            <h2 className="page-title">Profile Settings</h2>
-            <p className="page-subtitle">
-              Manage your personal information and keep your account details up to date.
-            </p>
-          </div>
+        <div className="profile-hero">
+          <div className="profile-hero-left">
+            <div className="profile-avatar-large">{firstLetter}</div>
 
-          <div className="hero-kpis">
-            <div className="kpi-pill">Role: {profile.role}</div>
-            <div className="kpi-pill">Account: Active</div>
+            <div>
+              <h2 className="page-title">My Profile</h2>
+              <p className="page-subtitle">
+                Manage your personal information and keep your account details up to date.
+              </p>
+
+              <div className="profile-badges">
+                <span className="kpi-pill">Role: {profile.role}</span>
+                <span className="kpi-pill">Account: Active</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -117,7 +123,7 @@ export default function Profile() {
             <div className="list-item">
               <div>
                 <strong>Role</strong>
-                <div className="muted">{profile.role || "-"}</div>
+                <div className="muted profile-role-text">{profile.role || "-"}</div>
               </div>
             </div>
 

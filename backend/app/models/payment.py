@@ -18,6 +18,14 @@ class Payment(db.Model):
     admin_remark = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now())
 
+    # ── Razorpay fields ────────────────────────────────────────────────────────
+    # razorpay_order_id   → ID of the order we create before showing the popup
+    # razorpay_payment_id → ID Razorpay gives after user pays (e.g. pay_XXXXXX)
+    # razorpay_signature  → HMAC-SHA256 we verify to confirm payment is genuine
+    razorpay_order_id   = db.Column(db.String(100), nullable=True)
+    razorpay_payment_id = db.Column(db.String(100), nullable=True)
+    razorpay_signature  = db.Column(db.String(255), nullable=True)
+
     bill = db.relationship("Bill", back_populates="payments")
 
     def to_dict(self):
@@ -31,5 +39,7 @@ class Payment(db.Model):
             "note": self.note,
             "status": self.status,
             "admin_remark": self.admin_remark,
+            "razorpay_order_id": self.razorpay_order_id,
+            "razorpay_payment_id": self.razorpay_payment_id,
             "created_at": str(self.created_at) if self.created_at else None,
         }

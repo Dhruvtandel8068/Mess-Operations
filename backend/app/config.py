@@ -36,3 +36,7 @@ class Config:
     AUTO_BILL_RUN_HOUR = int(os.getenv("AUTO_BILL_RUN_HOUR", 2))
     AUTO_BILL_RUN_MINUTE = int(os.getenv("AUTO_BILL_RUN_MINUTE", 15))
     AUTO_BILL_WINDOW_DAYS = int(os.getenv("AUTO_BILL_WINDOW_DAYS", 5))
+
+    # ── Razorpay ───────────────────────────────────────────────────────────────
+    RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
+    RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")

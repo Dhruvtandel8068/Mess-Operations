@@ -1,4 +1,8 @@
 import os
+import hmac
+import hashlib
+import razorpay
+import traceback
 from uuid import uuid4
 from io import BytesIO
 
@@ -24,8 +28,11 @@ from app.services.email_service import (
 )
 
 billing_bp = Blueprint("billing_bp", __name__)
+
+
 def is_admin():
     return get_jwt().get("role") == "admin"
+
 
 def create_notification(title, message, user_id=None, role_target=None, notification_type="general", action_url=None):
     row = Notification(
@@ -171,6 +178,7 @@ def list_bills():
 
     except Exception as e:
         print("BILL LIST ERROR:", str(e))
+        traceback.print_exc()
         return jsonify({"message": f"Failed to load bills: {str(e)}"}), 500
 
 
@@ -203,6 +211,7 @@ def bill_summary():
 
     except Exception as e:
         print("BILL SUMMARY ERROR:", str(e))
+        traceback.print_exc()
         return jsonify({"message": f"Failed to load bill summary: {str(e)}"}), 500
 
 
@@ -292,7 +301,6 @@ def generate_monthly_bills():
                 action_url="/billing",
             )
 
-            # Email send
             if user.email:
                 send_bill_generated_email(
                     user_email=user.email,
@@ -310,6 +318,7 @@ def generate_monthly_bills():
     except Exception as e:
         db.session.rollback()
         print("BILL GENERATE ERROR:", str(e))
+        traceback.print_exc()
         return jsonify({"message": f"Failed to generate bills: {str(e)}"}), 500
 
 
@@ -336,6 +345,7 @@ def download_bill_pdf(bill_id):
 
     except Exception as e:
         print("DOWNLOAD PDF ERROR:", str(e))
+        traceback.print_exc()
         return jsonify({"message": f"Failed to download PDF: {str(e)}"}), 500
 
 
@@ -376,7 +386,6 @@ def upload_payment(bill_id):
         )
 
         bill.status = "Pending Approval"
-
         db.session.add(payment)
 
         create_notification(
@@ -387,7 +396,6 @@ def upload_payment(bill_id):
             action_url="/payment-approval",
         )
 
-        # Email send to user
         user = bill.user if hasattr(bill, "user") else User.query.get(bill.user_id)
         if user and user.email:
             send_payment_submitted_email(
@@ -407,6 +415,7 @@ def upload_payment(bill_id):
     except Exception as e:
         db.session.rollback()
         print("PAYMENT ERROR:", str(e))
+        traceback.print_exc()
         return jsonify({"message": f"Failed to submit payment: {str(e)}"}), 500
 
 
@@ -435,6 +444,7 @@ def list_pending_payments():
 
     except Exception as e:
         print("PENDING PAYMENTS ERROR:", str(e))
+        traceback.print_exc()
         return jsonify({"message": f"Failed to load pending payments: {str(e)}"}), 500
 
 
@@ -463,7 +473,6 @@ def approve_payment(payment_id):
                 action_url="/billing",
             )
 
-            # Email send
             user = payment.bill.user if hasattr(payment.bill, "user") else User.query.get(payment.bill.user_id)
             if user and user.email:
                 send_payment_approved_email(
@@ -482,6 +491,7 @@ def approve_payment(payment_id):
     except Exception as e:
         db.session.rollback()
         print("APPROVE PAYMENT ERROR:", str(e))
+        traceback.print_exc()
         return jsonify({"message": f"Failed to approve payment: {str(e)}"}), 500
 
 
@@ -510,7 +520,6 @@ def reject_payment(payment_id):
                 action_url="/billing",
             )
 
-            # Email send
             user = payment.bill.user if hasattr(payment.bill, "user") else User.query.get(payment.bill.user_id)
             if user and user.email:
                 send_payment_rejected_email(
@@ -530,4 +539,150 @@ def reject_payment(payment_id):
     except Exception as e:
         db.session.rollback()
         print("REJECT PAYMENT ERROR:", str(e))
+        traceback.print_exc()
         return jsonify({"message": f"Failed to reject payment: {str(e)}"}), 500
+
+
+@billing_bp.route("/<int:bill_id>/razorpay-order", methods=["POST"])
+@jwt_required()
+def create_razorpay_order(bill_id):
+    try:
+        bill = Bill.query.get_or_404(bill_id)
+
+        if bill.user_id != int(get_jwt_identity()):
+            return jsonify({"message": "Not allowed"}), 403
+
+        if bill.status == "Paid":
+            return jsonify({"message": "This bill is already paid"}), 400
+
+        if float(bill.total_amount or 0) <= 0:
+            return jsonify({"message": "Bill amount must be greater than zero"}), 400
+
+        key_id = current_app.config.get("RAZORPAY_KEY_ID")
+        key_secret = current_app.config.get("RAZORPAY_KEY_SECRET")
+
+        if not key_id or not key_secret:
+            return jsonify({"message": "Razorpay is not configured on the server. Contact admin."}), 500
+
+        client = razorpay.Client(auth=(key_id, key_secret))
+
+        amount_in_paise = int(float(bill.total_amount) * 100)
+
+        order = client.order.create({
+            "amount": amount_in_paise,
+            "currency": "INR",
+            "receipt": f"bill_{bill.id}",
+            "notes": {
+                "bill_id": str(bill.id),
+                "period": bill.period or "",
+                "user_id": str(bill.user_id),
+            },
+        })
+
+        return jsonify({
+            "order_id": order["id"],
+            "amount": amount_in_paise,
+            "currency": "INR",
+            "key_id": key_id,
+            "bill_id": bill.id,
+            "period": bill.period,
+            "total_amount": float(bill.total_amount),
+        }), 200
+
+    except razorpay.errors.BadRequestError as e:
+        print("RAZORPAY BAD REQUEST:", str(e))
+        traceback.print_exc()
+        return jsonify({"message": f"Razorpay error: {str(e)}"}), 400
+    except Exception as e:
+        print("RAZORPAY ORDER ERROR:", str(e))
+        traceback.print_exc()
+        return jsonify({"message": f"Failed to create payment order: {str(e)}"}), 500
+
+
+@billing_bp.route("/<int:bill_id>/razorpay-verify", methods=["POST"])
+@jwt_required()
+def verify_razorpay_payment(bill_id):
+    try:
+        bill = Bill.query.get_or_404(bill_id)
+
+        if bill.user_id != int(get_jwt_identity()):
+            return jsonify({"message": "Not allowed"}), 403
+
+        data = request.get_json() or {}
+        razorpay_order_id = data.get("razorpay_order_id", "").strip()
+        razorpay_payment_id = data.get("razorpay_payment_id", "").strip()
+        razorpay_signature = data.get("razorpay_signature", "").strip()
+
+        if not razorpay_order_id or not razorpay_payment_id or not razorpay_signature:
+            return jsonify({"message": "Missing payment verification data"}), 400
+
+        key_secret = current_app.config.get("RAZORPAY_KEY_SECRET", "")
+        body = f"{razorpay_order_id}|{razorpay_payment_id}"
+
+        expected_signature = hmac.new(
+            key_secret.encode("utf-8"),
+            body.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+        if expected_signature != razorpay_signature:
+            print(f"RAZORPAY SIGNATURE MISMATCH — bill_id={bill_id}")
+            return jsonify({"message": "Payment verification failed — invalid signature"}), 400
+
+        payment = Payment(
+            bill_id=bill.id,
+            mode="Razorpay",
+            status="Approved",
+            receipt_no=razorpay_payment_id,
+            razorpay_order_id=razorpay_order_id,
+            razorpay_payment_id=razorpay_payment_id,
+            razorpay_signature=razorpay_signature,
+        )
+        db.session.add(payment)
+        bill.status = "Paid"
+
+        user = bill.user if hasattr(bill, "user") else User.query.get(bill.user_id)
+
+        create_notification(
+            title="Payment Successful",
+            message=(
+                f"Your Razorpay payment for {bill.period} was successful. "
+                f"Amount: ₹{float(bill.total_amount):.2f}. "
+                f"Ref: {razorpay_payment_id}"
+            ),
+            user_id=bill.user_id,
+            notification_type="payment_approved",
+            action_url="/billing",
+        )
+
+        create_notification(
+            title="Online Payment Received",
+            message=(
+                f"Razorpay payment from {user.full_name if user else 'a user'} "
+                f"for {bill.period}. Amount: ₹{float(bill.total_amount):.2f}."
+            ),
+            role_target="admin",
+            notification_type="payment_approved",
+            action_url="/billing",
+        )
+
+        if user and user.email:
+            send_payment_approved_email(
+                user_email=user.email,
+                user_name=user.full_name,
+                period=bill.period,
+            )
+
+        db.session.commit()
+
+        return jsonify({
+            "message": "Payment verified and confirmed successfully",
+            "bill": bill.to_dict(),
+            "payment": payment.to_dict(),
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print("RAZORPAY VERIFY ERROR:", str(e))
+        traceback.print_exc()
+        return jsonify({"message": f"Payment verification failed: {str(e)}"}), 500

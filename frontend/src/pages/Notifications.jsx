@@ -12,6 +12,7 @@ export default function Notifications() {
   const isAdmin = user?.role === "admin";
 
   const [notifications, setNotifications] = useState([]);
+  const [users, setUsers] = useState([]);
   const [search, setSearch] = useState("");
   const [targetFilter, setTargetFilter] = useState("all");
   const [loading, setLoading] = useState(false);
@@ -19,13 +20,17 @@ export default function Notifications() {
   const [form, setForm] = useState({
     title: "",
     message: "",
-    role_target: "user",
+    target_type: "all_users",
+    user_id: "",
     notification_type: "general",
     action_url: "",
   });
 
   useEffect(() => {
     loadNotifications();
+    if (isAdmin) {
+      loadUsers();
+    }
   }, []);
 
   const loadNotifications = async () => {
@@ -41,19 +46,44 @@ export default function Notifications() {
     }
   };
 
+  const loadUsers = async () => {
+    try {
+      const res = await getData("/notifications/users-list");
+      setUsers(Array.isArray(res) ? res : []);
+    } catch (error) {
+      console.error("Failed to load users", error);
+      showError(error?.response?.data?.message || "Failed to load users");
+    }
+  };
+
   const createNotification = async (e) => {
     e.preventDefault();
 
     try {
-      await postData("/notifications/", form);
+      const payload = {
+        title: form.title,
+        message: form.message,
+        target_type: form.target_type,
+        notification_type: form.notification_type,
+        action_url: form.action_url,
+      };
+
+      if (form.target_type === "single_user") {
+        payload.user_id = Number(form.user_id);
+      }
+
+      await postData("/notifications/", payload);
+
       setForm({
         title: "",
         message: "",
-        role_target: "user",
+        target_type: "all_users",
+        user_id: "",
         notification_type: "general",
         action_url: "",
       });
-      showSuccess("Notification created");
+
+      showSuccess("Notification created successfully");
       loadNotifications();
     } catch (error) {
       console.error("Failed to create notification", error);
@@ -92,13 +122,19 @@ export default function Notifications() {
 
   const filteredNotifications = useMemo(() => {
     return notifications.filter((item) => {
-      const matchesSearch = `${item.title} ${item.message} ${item.role_target || ""} ${item.notification_type || ""}`
+      const targetLabel = item.user_id
+        ? "single user"
+        : item.role_target || "";
+
+      const matchesSearch = `${item.title} ${item.message} ${targetLabel} ${item.notification_type || ""}`
         .toLowerCase()
         .includes(search.toLowerCase());
 
       const matchesTarget =
         targetFilter === "all"
           ? true
+          : targetFilter === "single_user"
+          ? Boolean(item.user_id)
           : String(item.role_target || "").toLowerCase() === targetFilter;
 
       return matchesSearch && matchesTarget;
@@ -107,11 +143,12 @@ export default function Notifications() {
 
   const totalNotifications = notifications.length;
   const unreadCount = notifications.filter((n) => !n.is_read).length;
+  const singleUserNotifications = notifications.filter((n) => Boolean(n.user_id)).length;
   const userNotifications = notifications.filter(
-    (n) => String(n.role_target || "").toLowerCase() === "user"
+    (n) => !n.user_id && String(n.role_target || "").toLowerCase() === "user"
   ).length;
   const adminNotifications = notifications.filter(
-    (n) => String(n.role_target || "").toLowerCase() === "admin"
+    (n) => !n.user_id && String(n.role_target || "").toLowerCase() === "admin"
   ).length;
 
   return (
@@ -121,14 +158,15 @@ export default function Notifications() {
           <div>
             <h2 className="page-title">Notification System</h2>
             <p className="page-subtitle">
-              Broadcast important notices, meal updates, due reminders, and system announcements.
+              Manage individual user notifications, all-user broadcasts, and admin-only alerts.
             </p>
           </div>
 
           <div className="hero-kpis">
             <div className="kpi-pill">Total: {totalNotifications}</div>
             <div className="kpi-pill">Unread: {unreadCount}</div>
-            <div className="kpi-pill">User Notices: {userNotifications}</div>
+            <div className="kpi-pill">Single User: {singleUserNotifications}</div>
+            <div className="kpi-pill">User Broadcast: {userNotifications}</div>
             <div className="kpi-pill">Admin Notices: {adminNotifications}</div>
           </div>
         </div>
@@ -158,11 +196,18 @@ export default function Notifications() {
             <div className="form-row">
               <select
                 className="select"
-                value={form.role_target}
-                onChange={(e) => setForm({ ...form, role_target: e.target.value })}
+                value={form.target_type}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    target_type: e.target.value,
+                    user_id: e.target.value === "single_user" ? form.user_id : "",
+                  })
+                }
               >
-                <option value="user">User</option>
-                <option value="admin">Admin</option>
+                <option value="all_users">All Users</option>
+                <option value="single_user">Single User</option>
+                <option value="admin_only">Admin Only</option>
               </select>
 
               <select
@@ -180,6 +225,22 @@ export default function Notifications() {
                 <option value="low_stock">Low Stock</option>
               </select>
             </div>
+
+            {form.target_type === "single_user" && (
+              <select
+                className="select"
+                value={form.user_id}
+                onChange={(e) => setForm({ ...form, user_id: e.target.value })}
+                required
+              >
+                <option value="">Select User</option>
+                {users.map((userItem) => (
+                  <option key={userItem.id} value={userItem.id}>
+                    {userItem.full_name} ({userItem.email})
+                  </option>
+                ))}
+              </select>
+            )}
 
             <input
               className="input"
@@ -209,7 +270,7 @@ export default function Notifications() {
             <div className="stat-card">
               <div className="stat-label">All Notifications</div>
               <div className="stat-value">{totalNotifications}</div>
-              <div className="stat-trend">Broadcast records</div>
+              <div className="stat-trend">Visible to current user</div>
             </div>
 
             <div className="stat-card">
@@ -234,11 +295,12 @@ export default function Notifications() {
             className="select"
             value={targetFilter}
             onChange={(e) => setTargetFilter(e.target.value)}
-            style={{ maxWidth: 180 }}
+            style={{ maxWidth: 220 }}
           >
             <option value="all">All Targets</option>
-            <option value="user">User</option>
-            <option value="admin">Admin</option>
+            <option value="single_user">Single User</option>
+            <option value="user">All Users</option>
+            <option value="admin">Admin Only</option>
           </select>
         </div>
       </section>
@@ -260,6 +322,12 @@ export default function Notifications() {
                   <div className="muted" style={{ marginTop: 8, fontSize: "0.9rem" }}>
                     {item.created_at || "-"}
                   </div>
+
+                  {item.action_url && (
+                    <div className="muted" style={{ marginTop: 6 }}>
+                      Action: {item.action_url}
+                    </div>
+                  )}
 
                   <div className="button-group" style={{ marginTop: 12 }}>
                     {!item.is_read && (
@@ -285,12 +353,14 @@ export default function Notifications() {
                 <div style={{ display: "grid", gap: 8, justifyItems: "end" }}>
                   <span
                     className={`badge ${
-                      String(item.role_target || "").toLowerCase() === "admin"
+                      item.user_id
+                        ? "badge-warning"
+                        : String(item.role_target || "").toLowerCase() === "admin"
                         ? "badge-info"
                         : "badge-success"
                     }`}
                   >
-                    {item.role_target || "all"}
+                    {item.user_id ? "Single User" : item.role_target || "all"}
                   </span>
 
                   <span className={item.is_read ? "badge badge-success" : "badge badge-warning"}>

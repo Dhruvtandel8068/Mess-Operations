@@ -1,7 +1,6 @@
 import os
 from flask import Flask, send_from_directory
 from flask_cors import CORS
-from werkzeug.security import generate_password_hash
 
 from app.config import Config
 from app.utils.db import db, jwt, bcrypt, mail
@@ -11,19 +10,38 @@ from app.scheduler import start_scheduler
 
 
 def seed_admin_and_categories(app):
-    admin_email = app.config.get("ADMIN_EMAIL")
-    admin_password = app.config.get("ADMIN_PASSWORD")
+    admin_email = (app.config.get("ADMIN_EMAIL") or "").strip().lower()
+    admin_password = app.config.get("ADMIN_PASSWORD") or ""
 
-    existing = User.query.filter_by(email=admin_email).first()
-    if not existing:
-        admin = User(
-            full_name="Admin",
-            email=admin_email,
-            password_hash=generate_password_hash(admin_password),
-            role="admin",
-            must_change_password=False,
-        )
-        db.session.add(admin)
+    if admin_email and admin_password:
+        existing = User.query.filter_by(email=admin_email).first()
+
+        if not existing:
+            admin = User(
+                full_name="Admin",
+                email=admin_email,
+                role="admin",
+                must_change_password=False,
+            )
+            admin.set_password(admin_password)
+            db.session.add(admin)
+            print("Admin user created successfully.")
+        else:
+            updated = False
+
+            if existing.role != "admin":
+                existing.role = "admin"
+                updated = True
+
+            # Optional: if old admin password was stored in plain text or old/wrong format,
+            # uncomment below to force-reset admin password on every startup.
+            # existing.set_password(admin_password)
+            # updated = True
+
+            if updated:
+                print("Existing admin updated successfully.")
+            else:
+                print("Admin already exists.")
 
     default_categories = [
         "Vegetables",

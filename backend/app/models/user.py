@@ -1,5 +1,4 @@
-from werkzeug.security import generate_password_hash, check_password_hash
-from app.utils.db import db
+from app.utils.db import db, bcrypt
 
 
 class User(db.Model):
@@ -17,10 +16,14 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, server_default=db.func.now())
 
     def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
+        self.password_hash = bcrypt.generate_password_hash(password).decode("utf-8")
 
     def check_password(self, password):
-        return check_password_hash(self.password_hash, password)
+        try:
+            return bcrypt.check_password_hash(self.password_hash, password)
+        except Exception as e:
+            print("PASSWORD CHECK ERROR:", str(e))
+            return False
 
     def to_dict(self):
         return {

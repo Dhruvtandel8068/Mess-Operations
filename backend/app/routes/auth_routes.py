@@ -1,7 +1,6 @@
 from datetime import timedelta
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
-from werkzeug.security import generate_password_hash, check_password_hash
 
 from app.models.user import User
 from app.utils.db import db
@@ -38,12 +37,12 @@ def register():
         user = User(
             full_name=full_name,
             email=email,
-            password_hash=generate_password_hash(password),
             role="user",
             contact=contact or None,
             room_no=room_no or None,
             must_change_password=False,
         )
+        user.set_password(password)
 
         db.session.add(user)
         db.session.commit()
@@ -96,7 +95,11 @@ def login():
         password = data.get("password") or ""
 
         user = User.query.filter_by(email=email).first()
-        if not user or not user.check_password(password):
+
+        if not user:
+            return jsonify({"message": "Invalid email or password"}), 401
+
+        if not user.check_password(password):
             return jsonify({"message": "Invalid email or password"}), 401
 
         token = build_token(user)
@@ -129,7 +132,7 @@ def change_password():
         if not old_password or not new_password or not confirm_password:
             return jsonify({"message": "All password fields are required"}), 400
 
-        if not check_password_hash(user.password_hash, old_password):
+        if not user.check_password(old_password):
             return jsonify({"message": "Old password is incorrect"}), 400
 
         if new_password != confirm_password:
@@ -138,7 +141,7 @@ def change_password():
         if len(new_password) < 6:
             return jsonify({"message": "New password must be at least 6 characters"}), 400
 
-        user.password_hash = generate_password_hash(new_password)
+        user.set_password(new_password)
         user.must_change_password = False
 
         db.session.commit()

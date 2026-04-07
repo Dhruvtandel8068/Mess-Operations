@@ -13,7 +13,7 @@ import Expenses from "../pages/Expenses";
 import Reports from "../pages/Reports";
 import Inventory from "../pages/Inventory";
 import Users from "../pages/Users";
-import Layout from "../components/Layout";
+import MainLayout from "../layouts/MainLayout";
 import ProtectedRoute from "../components/ProtectedRoute";
 import ChangePassword from "../pages/ChangePassword";
 
@@ -39,7 +39,7 @@ export default function AppRoutes() {
       />
 
       <Route element={<ProtectedRoute />}>
-        <Route element={<Layout />}>
+        <Route element={<MainLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/menu" element={<Menu />} />
           <Route path="/attendance" element={<Attendance />} />

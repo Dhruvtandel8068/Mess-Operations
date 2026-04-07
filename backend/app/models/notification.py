@@ -5,14 +5,22 @@ class Notification(db.Model):
     __tablename__ = "notifications"
 
     id = db.Column(db.Integer, primary_key=True)
+
     user_id = db.Column(
         db.Integer,
         db.ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True
     )
+
     title = db.Column(db.String(120), nullable=False)
     message = db.Column(db.Text, nullable=False)
+
+    # role_target can be:
+    # "admin" -> all admins
+    # "user"  -> all users
+    # None    -> only specific user if user_id is set
     role_target = db.Column(db.String(20), nullable=True)
+
     notification_type = db.Column(db.String(50), nullable=False, default="general")
     is_read = db.Column(db.Boolean, nullable=False, default=False)
     action_url = db.Column(db.String(255), nullable=True)

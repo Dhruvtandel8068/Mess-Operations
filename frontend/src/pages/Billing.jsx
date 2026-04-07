@@ -11,6 +11,9 @@ export default function Billing() {
   const [paymentNote, setPaymentNote] = useState({});
   const [generating, setGenerating] = useState(false);
 
+  // NEW: track which bill's Razorpay popup is opening
+  const [razorpayLoadingId, setRazorpayLoadingId] = useState(null);
+
   const [showQrModal, setShowQrModal] = useState(false);
   const [selectedBill, setSelectedBill] = useState(null);
 
@@ -22,13 +25,14 @@ export default function Billing() {
 
   const [generateMonth, setGenerateMonth] = useState(currentMonth);
   const [generateYear, setGenerateYear] = useState(currentYear);
-  const [perMealCost, setPerMealCost] = useState(1000);
+  const [perMealCost, setPerMealCost] = useState(100);
   const [billingType, setBillingType] = useState("all");
   const [selectedUserId, setSelectedUserId] = useState("");
 
-  // Put your real UPI ID here
   const UPI_ID = "dhruvtandel8068@okaxis";
   const PAYEE_NAME = "MessMate Pro";
+
+  // ─── Data loaders ──────────────────────────────────────────────────────────
 
   const loadBills = async () => {
     try {
@@ -70,6 +74,8 @@ export default function Billing() {
     loadData();
   }, []);
 
+  // ─── Admin: generate bills ─────────────────────────────────────────────────
+
   const handleGenerateBills = async () => {
     try {
       if (billingType === "single" && !selectedUserId) {
@@ -101,6 +107,8 @@ export default function Billing() {
     }
   };
 
+  // ─── PDF download ──────────────────────────────────────────────────────────
+
   const handleDownloadPdf = async (billId) => {
     try {
       const response = await api.get(`/billing/${billId}/download-pdf`, {
@@ -123,6 +131,8 @@ export default function Billing() {
       alert("Failed to download PDF");
     }
   };
+
+  // ─── Manual UPI / QR proof upload (existing flow) ─────────────────────────
 
   const handleFileChange = (billId, file) => {
     setPaymentFile((prev) => ({ ...prev, [billId]: file }));
@@ -154,8 +164,7 @@ export default function Billing() {
 
   const handleOpenUpiApp = () => {
     if (!selectedBill) return;
-    const upiLink = buildUpiLink(selectedBill);
-    window.location.href = upiLink;
+    window.location.href = buildUpiLink(selectedBill);
   };
 
   const handlePaymentSubmit = async (billId) => {
@@ -170,12 +179,10 @@ export default function Billing() {
       formData.append("mode", "UPI");
 
       await api.post(`/billing/${billId}/pay`, formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
+        headers: { "Content-Type": "multipart/form-data" },
       });
 
-      alert("Payment proof submitted successfully");
+      alert("Payment proof submitted successfully. Waiting for admin approval.");
       setPaymentFile((prev) => ({ ...prev, [billId]: null }));
       setPaymentNote((prev) => ({ ...prev, [billId]: "" }));
       closeQrModal();
@@ -185,6 +192,111 @@ export default function Billing() {
       alert(error?.response?.data?.message || "Payment submission failed");
     }
   };
+
+  // ─── NEW: Razorpay online payment ──────────────────────────────────────────
+
+  const handleRazorpayPayment = async (bill) => {
+    // Check Razorpay script loaded (added in index.html)
+    if (typeof window.Razorpay === "undefined") {
+      alert(
+        "Razorpay failed to load. Please check your internet connection and refresh the page."
+      );
+      return;
+    }
+
+    setRazorpayLoadingId(bill.id);
+
+    try {
+      // STEP 1 — create order on our backend
+      const res = await api.post(`/billing/${bill.id}/razorpay-order`);
+      const { order_id, amount, currency, key_id, period, total_amount } = res.data;
+
+      // STEP 2 — open Razorpay checkout popup
+      const options = {
+        key: key_id,
+        amount: amount,         // in paise
+        currency: currency,
+        name: "Mess Operations",
+        description: `Mess Bill — ${period}`,
+        order_id: order_id,
+
+        // STEP 3 — runs automatically after user pays inside the popup
+        handler: async function (response) {
+          try {
+            // Send the 3 Razorpay IDs to our backend for signature verification
+            await api.post(`/billing/${bill.id}/razorpay-verify`, {
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            });
+
+            alert(
+              `✅ Payment successful!\n` +
+              `Amount: ₹${Number(total_amount).toFixed(2)} for ${period}\n` +
+              `Payment ID: ${response.razorpay_payment_id}\n\n` +
+              `Your bill is now marked as Paid.`
+            );
+
+            loadData(); // refresh bills list
+          } catch (err) {
+            console.error("Verification error:", err);
+            alert(
+              (err?.response?.data?.message || "Payment verification failed.") +
+              `\n\nPlease contact admin with your Payment ID: ${response.razorpay_payment_id}`
+            );
+          } finally {
+            setRazorpayLoadingId(null);
+          }
+        },
+
+        // Pre-fill user details in the popup
+        prefill: {
+          name: user?.full_name || "",
+          email: user?.email || "",
+          contact: user?.contact || "",
+        },
+
+        notes: {
+          bill_id: String(bill.id),
+          period: period,
+        },
+
+        theme: {
+          color: "#2563eb",
+        },
+
+        modal: {
+          // Called when user closes the popup without paying
+          ondismiss: function () {
+            setRazorpayLoadingId(null);
+          },
+        },
+      };
+
+      const rzp = new window.Razorpay(options);
+
+      // Called if user's payment fails inside the popup (e.g. wrong OTP)
+      rzp.on("payment.failed", function (response) {
+        console.error("Payment failed:", response.error);
+        alert(
+          `Payment failed.\nReason: ${response.error.description}\n\n` +
+          `You can try again or use the manual UPI option.`
+        );
+        setRazorpayLoadingId(null);
+      });
+
+      rzp.open();
+    } catch (err) {
+      console.error("Razorpay init error:", err);
+      alert(
+        err?.response?.data?.message ||
+        "Could not initiate payment. Please try again."
+      );
+      setRazorpayLoadingId(null);
+    }
+  };
+
+  // ─── Admin: approve / reject manual payments ───────────────────────────────
 
   const approvePayment = async (paymentId) => {
     try {
@@ -213,6 +325,8 @@ export default function Billing() {
     }
   };
 
+  // ─── Stats ─────────────────────────────────────────────────────────────────
+
   const stats = useMemo(() => {
     const totalBills = bills.length;
     const paidBills = bills.filter((b) => b.status === "Paid").length;
@@ -220,13 +334,14 @@ export default function Billing() {
     const pendingBills = bills.filter(
       (b) => b.status === "Pending Approval"
     ).length;
-
     return { totalBills, paidBills, unpaidBills, pendingBills };
   }, [bills]);
 
   if (loading) {
     return <div style={styles.loading}>Loading billing data...</div>;
   }
+
+  // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div style={styles.page}>
@@ -239,6 +354,7 @@ export default function Billing() {
         </div>
       </div>
 
+      {/* Stats */}
       <div style={styles.statsGrid}>
         <div style={styles.statCard}>
           <h3>Total Bills</h3>
@@ -246,18 +362,19 @@ export default function Billing() {
         </div>
         <div style={styles.statCard}>
           <h3>Paid</h3>
-          <p>{stats.paidBills}</p>
+          <p style={{ color: "#16a34a" }}>{stats.paidBills}</p>
         </div>
         <div style={styles.statCard}>
           <h3>Unpaid</h3>
-          <p>{stats.unpaidBills}</p>
+          <p style={{ color: "#dc2626" }}>{stats.unpaidBills}</p>
         </div>
         <div style={styles.statCard}>
           <h3>Pending Approval</h3>
-          <p>{stats.pendingBills}</p>
+          <p style={{ color: "#d97706" }}>{stats.pendingBills}</p>
         </div>
       </div>
 
+      {/* Admin: generate bills */}
       {isAdmin && (
         <div style={styles.card}>
           <h3 style={styles.cardTitle}>Generate Monthly Bills</h3>
@@ -329,6 +446,7 @@ export default function Billing() {
         </div>
       )}
 
+      {/* Bills table */}
       <div style={styles.card}>
         <h3 style={styles.cardTitle}>Bills</h3>
 
@@ -356,14 +474,18 @@ export default function Billing() {
               ) : (
                 bills.map((bill) => (
                   <tr key={bill.id}>
-                    {isAdmin && <td style={styles.tdLeft}>{bill.user_name}</td>}
+                    {isAdmin && (
+                      <td style={styles.tdLeft}>{bill.user_name}</td>
+                    )}
                     <td style={styles.tdLeft}>{bill.period}</td>
                     <td style={styles.tdCenter}>{bill.total_meals}</td>
                     <td style={styles.tdCenter}>
                       ₹{Number(bill.per_meal_cost || 0).toFixed(2)}
                     </td>
                     <td style={styles.tdCenter}>
-                      ₹{Number(bill.total_amount || 0).toFixed(2)}
+                      <strong>
+                        ₹{Number(bill.total_amount || 0).toFixed(2)}
+                      </strong>
                     </td>
                     <td style={styles.tdCenter}>
                       <div style={styles.centerBox}>
@@ -392,19 +514,44 @@ export default function Billing() {
                       </div>
                     </td>
 
+                    {/* Payment column — regular users only */}
                     {!isAdmin && (
                       <td style={styles.tdCenter}>
                         {bill.status === "Unpaid" ? (
-                          <div style={styles.payBtnBox}>
+                          <div style={styles.payBtnGroup}>
+                            {/*
+                              Option 1 — Pay online via Razorpay
+                              Instant, auto-approved, no admin action needed
+                            */}
+                            <button
+                              onClick={() => handleRazorpayPayment(bill)}
+                              disabled={razorpayLoadingId === bill.id}
+                              style={styles.razorpayBtn}
+                              title="Pay instantly online — no admin approval needed"
+                            >
+                              {razorpayLoadingId === bill.id
+                                ? "Opening..."
+                                : `Pay Online ₹${Number(bill.total_amount).toFixed(0)}`}
+                            </button>
+
+                            {/*
+                              Option 2 — Manual UPI proof upload (existing flow)
+                              User scans QR, uploads screenshot, admin approves
+                            */}
                             <button
                               onClick={() => openQrModal(bill)}
-                              style={styles.primaryBtn}
+                              style={styles.secondaryBtn}
+                              title="Pay via UPI and upload proof for admin approval"
                             >
-                              Pay Now
+                              Pay via UPI
                             </button>
                           </div>
+                        ) : bill.status === "Pending Approval" ? (
+                          <span style={styles.pendingText}>
+                            Awaiting admin approval
+                          </span>
                         ) : (
-                          <span style={styles.muted}>No action needed</span>
+                          <span style={styles.paidText}>✓ Paid</span>
                         )}
                       </td>
                     )}
@@ -416,9 +563,15 @@ export default function Billing() {
         </div>
       </div>
 
+      {/* Admin: manual payment approval queue */}
       {isAdmin && (
         <div style={styles.card}>
-          <h3 style={styles.cardTitle}>Pending Payment Approvals</h3>
+          <h3 style={styles.cardTitle}>
+            Pending Payment Approvals
+            {pendingPayments.length > 0 && (
+              <span style={styles.countBadge}>{pendingPayments.length}</span>
+            )}
+          </h3>
 
           {pendingPayments.length === 0 ? (
             <p style={styles.muted}>No pending payments</p>
@@ -427,10 +580,19 @@ export default function Billing() {
               {pendingPayments.map((payment) => (
                 <div key={payment.id} style={styles.pendingCard}>
                   <h4 style={{ marginBottom: 8 }}>{payment.user_name}</h4>
-                  <p><strong>Email:</strong> {payment.user_email}</p>
-                  <p><strong>Period:</strong> {payment.bill?.period || "-"}</p>
-                  <p><strong>Amount:</strong> ₹{Number(payment.bill?.total_amount || 0).toFixed(2)}</p>
-                  <p><strong>Note:</strong> {payment.note || "-"}</p>
+                  <p>
+                    <strong>Email:</strong> {payment.user_email}
+                  </p>
+                  <p>
+                    <strong>Period:</strong> {payment.bill?.period || "-"}
+                  </p>
+                  <p>
+                    <strong>Amount:</strong> ₹
+                    {Number(payment.bill?.total_amount || 0).toFixed(2)}
+                  </p>
+                  <p>
+                    <strong>Note:</strong> {payment.note || "-"}
+                  </p>
 
                   {payment.proof_url && (
                     <a
@@ -439,7 +601,7 @@ export default function Billing() {
                       rel="noreferrer"
                       style={styles.link}
                     >
-                      View Payment Proof
+                      View Payment Proof →
                     </a>
                   )}
 
@@ -464,18 +626,25 @@ export default function Billing() {
         </div>
       )}
 
+      {/* Manual UPI payment modal — unchanged from original */}
       {showQrModal && selectedBill && (
         <div style={styles.modalOverlay} onClick={closeQrModal}>
-          <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+          <div
+            style={styles.modalCard}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div style={styles.modalHeader}>
-              <h3 style={{ margin: 0 }}>Pay Bill - {selectedBill.period}</h3>
+              <h3 style={{ margin: 0 }}>
+                Pay Bill — {selectedBill.period}
+              </h3>
               <button onClick={closeQrModal} style={styles.closeBtn}>
                 ×
               </button>
             </div>
 
             <p style={styles.modalText}>
-              Scan this QR code to pay to your UPI ID. The bill amount will be filled automatically on the user's mobile.
+              Scan this QR code to pay to your UPI ID. After paying, upload
+              the screenshot below for admin approval.
             </p>
 
             <div style={styles.qrWrap}>
@@ -496,10 +665,18 @@ export default function Billing() {
 
             <button
               onClick={handleOpenUpiApp}
-              style={{ ...styles.secondaryBtn, width: "100%", marginBottom: "12px" }}
+              style={{
+                ...styles.secondaryBtn,
+                width: "100%",
+                marginBottom: "12px",
+              }}
             >
               Open UPI App
             </button>
+
+            <p style={{ fontSize: "13px", color: "#64748b", margin: "0 0 6px" }}>
+              Upload payment screenshot:
+            </p>
 
             <input
               type="file"
@@ -517,7 +694,12 @@ export default function Billing() {
               onChange={(e) =>
                 handleNoteChange(selectedBill.id, e.target.value)
               }
-              style={styles.input}
+              style={{
+                ...styles.input,
+                width: "100%",
+                boxSizing: "border-box",
+                marginBottom: "12px",
+              }}
             />
 
             <button
@@ -532,6 +714,8 @@ export default function Billing() {
     </div>
   );
 }
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = {
   page: {
@@ -581,6 +765,17 @@ const styles = {
     marginTop: 0,
     marginBottom: "16px",
     color: "#0f172a",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+  },
+  countBadge: {
+    background: "#fef3c7",
+    color: "#92400e",
+    borderRadius: "999px",
+    padding: "2px 10px",
+    fontSize: "13px",
+    fontWeight: "600",
   },
   generateGrid: {
     display: "grid",
@@ -603,6 +798,18 @@ const styles = {
     padding: "10px 16px",
     cursor: "pointer",
     fontWeight: "600",
+  },
+  // NEW: Razorpay button — bolder label to signal "online payment"
+  razorpayBtn: {
+    background: "#1d4ed8",
+    color: "#fff",
+    border: "none",
+    borderRadius: "10px",
+    padding: "9px 14px",
+    cursor: "pointer",
+    fontWeight: "700",
+    fontSize: "13px",
+    width: "100%",
   },
   secondaryBtn: {
     background: "#e0f2fe",
@@ -628,6 +835,23 @@ const styles = {
     borderRadius: "10px",
     padding: "10px 14px",
     cursor: "pointer",
+  },
+  // NEW: two-button stack for the payment column
+  payBtnGroup: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: "6px",
+    minWidth: "150px",
+  },
+  pendingText: {
+    color: "#d97706",
+    fontSize: "13px",
+  },
+  paidText: {
+    color: "#16a34a",
+    fontSize: "13px",
+    fontWeight: "600",
   },
   tableWrap: {
     overflowX: "auto",
@@ -665,11 +889,6 @@ const styles = {
     justifyContent: "center",
     alignItems: "center",
   },
-  payBtnBox: {
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-  },
   emptyCell: {
     textAlign: "center",
     padding: "20px",
@@ -700,6 +919,7 @@ const styles = {
   fileInput: {
     fontSize: "13px",
     marginBottom: "12px",
+    display: "block",
   },
   muted: {
     color: "#64748b",

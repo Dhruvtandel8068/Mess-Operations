@@ -7,8 +7,6 @@ const mainLinks = [
   { to: "/billing", label: "Billing" },
   { to: "/complaints", label: "Complaints" },
   { to: "/notifications", label: "Notifications" },
-  { to: "/profile", label: "Profile" },
-  { to: "/change-password", label: "Change Password" },
 ];
 
 const adminLinks = [
