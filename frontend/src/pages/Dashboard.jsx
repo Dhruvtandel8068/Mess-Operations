@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getData } from "../services/api";
 import { showError } from "../utils/toast";
+import { formatDate, formatDateTime } from "../utils/format";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -42,6 +43,7 @@ function buildChartData(items = [], label = "Value") {
 
 export default function Dashboard() {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
+  const isAdmin = user?.role === "admin";
 
   const [summary, setSummary] = useState(null);
   const [expenseChart, setExpenseChart] = useState([]);
@@ -85,41 +87,75 @@ export default function Dashboard() {
     }
   };
 
-  const cards = useMemo(
-    () => [
+  const cards = useMemo(() => {
+    if (isAdmin) {
+      return [
+        {
+          label: "Total Users",
+          value: summary?.total_users ?? 0,
+          trend: "Live count",
+        },
+        {
+          label: "Monthly Expense",
+          value: `₹ ${Number(summary?.total_expense ?? 0).toFixed(2)}`,
+          trend: "This month",
+        },
+        {
+          label: "Meals Served Today",
+          value: summary?.meals_today ?? 0,
+          trend: "Today’s operations",
+        },
+        {
+          label: "Pending Complaints",
+          value: summary?.pending_complaints ?? 0,
+          trend: "Needs action",
+        },
+        {
+          label: "Unpaid Bills",
+          value: summary?.unpaid_bills ?? 0,
+          trend: "Awaiting payment",
+        },
+        {
+          label: "Low Stock Items",
+          value: summary?.low_stock_items ?? 0,
+          trend: "Inventory alert",
+        },
+      ];
+    }
+
+    return [
       {
-        label: "Total Users",
-        value: summary?.total_users ?? 0,
-        trend: "Live count",
+        label: "My Meals This Month",
+        value: summary?.total_attendance ?? 0,
+        trend: "Your meal count",
       },
       {
-        label: "Monthly Expense",
-        value: `₹ ${Number(summary?.total_expense ?? 0).toFixed(2)}`,
-        trend: "This month",
-      },
-      {
-        label: "Meals Served Today",
+        label: "Meals Today",
         value: summary?.meals_today ?? 0,
-        trend: "Today’s operations",
+        trend: "Today",
       },
       {
-        label: "Pending Complaints",
+        label: "My Pending Complaints",
         value: summary?.pending_complaints ?? 0,
-        trend: "Needs action",
+        trend: "Needs follow-up",
       },
       {
-        label: "Unpaid Bills",
+        label: "My Unpaid Bills",
         value: summary?.unpaid_bills ?? 0,
-        trend: "Awaiting payment",
+        trend: "Pending payment",
       },
       {
-        label: "Low Stock Items",
-        value: summary?.low_stock_items ?? 0,
-        trend: "Inventory alert",
+        label: "Bills Under Review",
+        value: summary?.pending_approval_bills ?? 0,
+        trend: "Awaiting approval",
       },
-    ],
-    [summary]
-  );
+      {
+        label: "Paid Bills",
+        value: summary?.paid_bills ?? 0,
+        trend: "Completed",
+      },
+    ];
+  }, [summary, isAdmin]);
 
   const expenseBarData = buildChartData(expenseChart, "Expense by Category");
   const complaintDoughnutData = {
@@ -154,17 +190,19 @@ export default function Dashboard() {
     {
       title: "Breakfast Count",
       value: mealBreakdown.breakfast || 0,
-      note: "Monthly breakfast attendance",
+      note: isAdmin
+        ? "Monthly breakfast attendance"
+        : "Your breakfast count",
     },
     {
       title: "Lunch Count",
       value: mealBreakdown.lunch || 0,
-      note: "Monthly lunch attendance",
+      note: isAdmin ? "Monthly lunch attendance" : "Your lunch count",
     },
     {
       title: "Dinner Count",
       value: mealBreakdown.dinner || 0,
-      note: "Monthly dinner attendance",
+      note: isAdmin ? "Monthly dinner attendance" : "Your dinner count",
     },
   ];
 
@@ -203,17 +241,24 @@ export default function Dashboard() {
       <section className="glass-card">
         <div className="hero-strip">
           <div>
-            <h2 className="page-title">Smart Mess Management Overview</h2>
+            <h2 className="page-title">
+              {isAdmin
+                ? "Smart Mess Management Overview"
+                : "My Dashboard Overview"}
+            </h2>
             <p className="page-subtitle">
-              Monitor billing, attendance, expenses, complaints, inventory, and
-              overall mess operations from one dashboard.
+              {isAdmin
+                ? "Monitor billing, attendance, expenses, complaints, inventory, and overall mess operations from one dashboard."
+                : "Track your meals, bills, complaints, and personal activity from one place."}
             </p>
           </div>
 
           <div className="hero-kpis">
             <div className="kpi-pill">Role: {user?.role || "user"}</div>
             <div className="kpi-pill">System: Active</div>
-            <div className="kpi-pill">Analytics: Live</div>
+            <div className="kpi-pill">
+              {isAdmin ? "Analytics: Admin" : "Analytics: Personal"}
+            </div>
           </div>
         </div>
       </section>
@@ -235,19 +280,25 @@ export default function Dashboard() {
       </section>
 
       <section className="content-two">
-        <div className="glass-card">
-          <h3 className="section-title">Monthly Expense Bar Chart</h3>
-          {loading ? (
-            <div className="empty-state">Loading chart...</div>
-          ) : expenseChart.length ? (
-            <Bar data={expenseBarData} options={barOptions} />
-          ) : (
-            <div className="empty-state">No expense chart data available.</div>
-          )}
-        </div>
+        {isAdmin && (
+          <div className="glass-card">
+            <h3 className="section-title">Monthly Expense Bar Chart</h3>
+            {loading ? (
+              <div className="empty-state">Loading chart...</div>
+            ) : expenseChart.length ? (
+              <Bar data={expenseBarData} options={barOptions} />
+            ) : (
+              <div className="empty-state">No expense chart data available.</div>
+            )}
+          </div>
+        )}
 
         <div className="glass-card">
-          <h3 className="section-title">Complaint Status Doughnut Chart</h3>
+          <h3 className="section-title">
+            {isAdmin
+              ? "Complaint Status Doughnut Chart"
+              : "My Complaint Status"}
+          </h3>
           {loading ? (
             <div className="empty-state">Loading chart...</div>
           ) : complaintChart.length ? (
@@ -260,7 +311,9 @@ export default function Dashboard() {
 
       <section className="content-two">
         <div className="glass-card">
-          <h3 className="section-title">Billing Status Chart</h3>
+          <h3 className="section-title">
+            {isAdmin ? "Billing Status Chart" : "My Billing Status"}
+          </h3>
           {loading ? (
             <div className="empty-state">Loading chart...</div>
           ) : billingChart.length ? (
@@ -271,7 +324,9 @@ export default function Dashboard() {
         </div>
 
         <div className="glass-card">
-          <h3 className="section-title">Attendance / Meals Analytics</h3>
+          <h3 className="section-title">
+            {isAdmin ? "Attendance / Meals Analytics" : "My Meals Analytics"}
+          </h3>
           {loading ? (
             <div className="empty-state">Loading chart...</div>
           ) : attendanceChart.length ? (
@@ -293,32 +348,65 @@ export default function Dashboard() {
       </section>
 
       <section className="content-two">
-        <div className="glass-card">
-          <h3 className="section-title">Recent Expenses</h3>
+        {isAdmin ? (
+          <div className="glass-card">
+            <h3 className="section-title">Recent Expenses</h3>
 
-          {summary?.recent_expenses?.length ? (
-            <div className="list-stack">
-              {summary.recent_expenses.map((item, index) => (
-                <div key={index} className="list-item">
-                  <div>
-                    <strong>{item.title}</strong>
-                    <div className="muted">{item.expense_date}</div>
+            {summary?.recent_expenses?.length ? (
+              <div className="list-stack">
+                {summary.recent_expenses.map((item, index) => (
+                  <div key={index} className="list-item">
+                    <div>
+                      <strong>{item.title}</strong>
+                      <div className="muted">{formatDate(item.expense_date)}</div>
+                    </div>
+                    <div>
+                      <span className="badge badge-info">
+                        ₹ {Number(item.amount || 0).toFixed(2)}
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <span className="badge badge-info">
-                      ₹ {Number(item.amount || 0).toFixed(2)}
-                    </span>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state">No recent expenses available.</div>
+            )}
+          </div>
+        ) : (
+          <div className="glass-card">
+            <h3 className="section-title">My Recent Bills</h3>
+
+            {summary?.recent_bills?.length ? (
+              <div className="list-stack">
+                {summary.recent_bills.map((item) => (
+                  <div key={item.bill_id} className="list-item">
+                    <div>
+                      <strong>{item.period || `${item.month}/${item.year}`}</strong>
+                      <div className="muted">
+                        Created: {formatDateTime(item.created_at)}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div className="badge badge-info">
+                        ₹ {Number(item.total_amount || 0).toFixed(2)}
+                      </div>
+                      <div className="muted" style={{ marginTop: 6 }}>
+                        {item.status}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-state">No recent expenses available.</div>
-          )}
-        </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state">No recent bills available.</div>
+            )}
+          </div>
+        )}
 
         <div className="glass-card">
-          <h3 className="section-title">Recent Complaints</h3>
+          <h3 className="section-title">
+            {isAdmin ? "Recent Complaints" : "My Recent Complaints"}
+          </h3>
 
           {summary?.recent_complaints?.length ? (
             <div className="list-stack">
@@ -330,6 +418,11 @@ export default function Dashboard() {
                     <div className="muted" style={{ marginTop: 6 }}>
                       Priority: {item.priority || "Medium"}
                     </div>
+                    {item.created_at && (
+                      <div className="muted" style={{ marginTop: 6 }}>
+                        Created: {formatDateTime(item.created_at)}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <span

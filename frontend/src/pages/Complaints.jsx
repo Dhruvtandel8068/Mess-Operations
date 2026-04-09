@@ -6,6 +6,7 @@ import {
   putData,
 } from "../services/api";
 import { showError, showSuccess } from "../utils/toast";
+import { formatDateTime } from "../utils/format";
 
 const complaintTypes = ["Food", "Cleaning", "Service", "Staff", "Other"];
 const priorities = ["Low", "Medium", "High", "Urgent"];
@@ -347,18 +348,18 @@ export default function Complaints() {
                       </span>
                     </td>
 
-                    <td>{item.created_at || "-"}</td>
+                    <td>{formatDateTime(item.created_at)}</td>
 
                     <td style={{ minWidth: 220 }}>
                       <div className="list-stack">
                         <div className="muted">
-                          Created: {item.created_at || "-"}
+                          Created: {formatDateTime(item.created_at)}
                         </div>
                         <div className="muted">
-                          Updated: {item.updated_at || "-"}
+                          Updated: {formatDateTime(item.updated_at)}
                         </div>
                         <div className="muted">
-                          Resolved: {item.resolved_at || "-"}
+                          Resolved: {formatDateTime(item.resolved_at)}
                         </div>
                         <div>
                           <strong>Remark:</strong> {item.admin_remark || "-"}

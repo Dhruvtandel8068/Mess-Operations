@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getData, postData } from "../services/api";
+import { formatDate } from "../utils/format";
 
 export default function Attendance() {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
@@ -10,10 +11,18 @@ export default function Attendance() {
   const [search, setSearch] = useState("");
   const [cutoffs, setCutoffs] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [checkingExisting, setCheckingExisting] = useState(false);
 
   const [form, setForm] = useState({
     user_id: "",
     date: new Date().toISOString().slice(0, 10),
+    breakfast: false,
+    lunch: false,
+    dinner: false,
+  });
+
+  const [existingAttendance, setExistingAttendance] = useState({
+    exists: false,
     breakfast: false,
     lunch: false,
     dinner: false,
@@ -29,6 +38,12 @@ export default function Attendance() {
     }
   }, [form.date, isAdmin]);
 
+  useEffect(() => {
+    if (isAdmin && form.user_id && form.date) {
+      checkExistingAttendance(form.user_id, form.date);
+    }
+  }, [form.user_id, form.date, isAdmin]);
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -42,7 +57,9 @@ export default function Attendance() {
         setUsers(normalUsers);
 
         if (!form.user_id && normalUsers.length) {
-          setForm((prev) => ({ ...prev, user_id: normalUsers[0].id }));
+          const firstUserId = String(normalUsers[0].id);
+          setForm((prev) => ({ ...prev, user_id: firstUserId }));
+          await checkExistingAttendance(firstUserId, form.date);
         }
       }
     } catch (error) {
@@ -61,11 +78,60 @@ export default function Attendance() {
     }
   };
 
+  const checkExistingAttendance = async (userId, selectedDate) => {
+    try {
+      setCheckingExisting(true);
+
+      const data = await getData(
+        `/attendance/check?user_id=${userId}&date=${selectedDate}`
+      );
+
+      if (data?.exists && data?.attendance) {
+        setExistingAttendance({
+          exists: true,
+          breakfast: !!data.attendance.breakfast,
+          lunch: !!data.attendance.lunch,
+          dinner: !!data.attendance.dinner,
+        });
+
+        setForm((prev) => ({
+          ...prev,
+          breakfast: false,
+          lunch: false,
+          dinner: false,
+        }));
+      } else {
+        setExistingAttendance({
+          exists: false,
+          breakfast: false,
+          lunch: false,
+          dinner: false,
+        });
+
+        setForm((prev) => ({
+          ...prev,
+          breakfast: false,
+          lunch: false,
+          dinner: false,
+        }));
+      }
+    } catch (error) {
+      console.error("Failed to check existing attendance", error);
+    } finally {
+      setCheckingExisting(false);
+    }
+  };
+
   const saveAttendance = async (e) => {
     e.preventDefault();
 
     if (!isAdmin) {
       alert("Only admin can mark attendance");
+      return;
+    }
+
+    if (!form.breakfast && !form.lunch && !form.dinner) {
+      alert("Please select at least one new meal");
       return;
     }
 
@@ -80,15 +146,10 @@ export default function Attendance() {
     try {
       await postData("/attendance", payload);
 
-      setForm((prev) => ({
-        ...prev,
-        breakfast: false,
-        lunch: false,
-        dinner: false,
-      }));
-
       await loadData();
       await loadCutoffs(form.date);
+      await checkExistingAttendance(form.user_id, form.date);
+
       alert("Attendance saved successfully");
     } catch (error) {
       console.error(error);
@@ -115,6 +176,16 @@ export default function Attendance() {
 
   return (
     <div className="page-grid">
+      <section className="glass-card">
+        <h2 className="page-title">Attendance</h2>
+        <p className="page-subtitle">
+          Welcome back, {user?.full_name || "User"}{" "}
+          <span className="badge badge-info" style={{ marginLeft: 8 }}>
+            {user?.role || "user"}
+          </span>
+        </p>
+      </section>
+
       <section className="glass-card">
         <h2 className="page-title">Attendance Management</h2>
         <p className="page-subtitle">
@@ -169,11 +240,31 @@ export default function Attendance() {
               </div>
             </div>
 
+            {checkingExisting ? (
+              <div className="empty-state">Checking existing attendance...</div>
+            ) : (
+              <div className="stats-grid">
+                <div className="stat-card">
+                  <div className="stat-label">Already Marked</div>
+                  <div className="muted">
+                    Breakfast: {existingAttendance.breakfast ? "Yes" : "No"}
+                  </div>
+                  <div className="muted">
+                    Lunch: {existingAttendance.lunch ? "Yes" : "No"}
+                  </div>
+                  <div className="muted">
+                    Dinner: {existingAttendance.dinner ? "Yes" : "No"}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="checkbox-row">
               <label className="checkbox-card">
                 <input
                   type="checkbox"
-                  checked={form.breakfast}
+                  checked={existingAttendance.breakfast || form.breakfast}
+                  disabled={existingAttendance.breakfast}
                   onChange={(e) =>
                     setForm({ ...form, breakfast: e.target.checked })
                   }
@@ -184,8 +275,11 @@ export default function Attendance() {
               <label className="checkbox-card">
                 <input
                   type="checkbox"
-                  checked={form.lunch}
-                  onChange={(e) => setForm({ ...form, lunch: e.target.checked })}
+                  checked={existingAttendance.lunch || form.lunch}
+                  disabled={existingAttendance.lunch}
+                  onChange={(e) =>
+                    setForm({ ...form, lunch: e.target.checked })
+                  }
                 />
                 Lunch
               </label>
@@ -193,8 +287,11 @@ export default function Attendance() {
               <label className="checkbox-card">
                 <input
                   type="checkbox"
-                  checked={form.dinner}
-                  onChange={(e) => setForm({ ...form, dinner: e.target.checked })}
+                  checked={existingAttendance.dinner || form.dinner}
+                  disabled={existingAttendance.dinner}
+                  onChange={(e) =>
+                    setForm({ ...form, dinner: e.target.checked })
+                  }
                 />
                 Dinner
               </label>
@@ -223,7 +320,7 @@ export default function Attendance() {
             <div className="stat-card">
               <div className="stat-label">Today</div>
               <div className="stat-value" style={{ fontSize: "1.15rem" }}>
-                {new Date().toLocaleDateString()}
+                {formatDate(new Date())}
               </div>
             </div>
           </div>
@@ -264,7 +361,7 @@ export default function Attendance() {
                   <td>
                     <strong>{row.user_name}</strong>
                   </td>
-                  <td>{row.date}</td>
+                  <td>{formatDate(row.date)}</td>
                   <td>{row.breakfast ? "Yes" : "No"}</td>
                   <td>{row.lunch ? "Yes" : "No"}</td>
                   <td>{row.dinner ? "Yes" : "No"}</td>

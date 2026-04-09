@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  deleteData,
   getData,
-  patchData,
   postData,
+  putData,
+  deleteData,
 } from "../services/api";
 import { showError, showSuccess } from "../utils/toast";
+import { formatDateTime } from "../utils/format";
 
 export default function Notifications() {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
@@ -13,31 +14,37 @@ export default function Notifications() {
 
   const [notifications, setNotifications] = useState([]);
   const [users, setUsers] = useState([]);
+
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+
   const [search, setSearch] = useState("");
   const [targetFilter, setTargetFilter] = useState("all");
-  const [loading, setLoading] = useState(false);
 
   const [form, setForm] = useState({
     title: "",
     message: "",
-    target_type: "all_users",
+    target_type: "all",
     user_id: "",
-    notification_type: "general",
     action_url: "",
+    notification_type: "general",
   });
 
   useEffect(() => {
-    loadNotifications();
-    if (isAdmin) {
-      loadUsers();
-    }
+    loadData();
   }, []);
 
-  const loadNotifications = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
-      const res = await getData("/notifications/");
-      setNotifications(Array.isArray(res) ? res : []);
+
+      const [notificationRes, usersRes] = await Promise.all([
+        getData("/notifications/"),
+        isAdmin ? getData("/users") : Promise.resolve([]),
+      ]);
+
+      setNotifications(Array.isArray(notificationRes) ? notificationRes : []);
+      setUsers(Array.isArray(usersRes) ? usersRes : []);
     } catch (error) {
       console.error("Failed to load notifications", error);
       showError(error?.response?.data?.message || "Failed to load notifications");
@@ -46,151 +53,135 @@ export default function Notifications() {
     }
   };
 
-  const loadUsers = async () => {
-    try {
-      const res = await getData("/notifications/users-list");
-      setUsers(Array.isArray(res) ? res : []);
-    } catch (error) {
-      console.error("Failed to load users", error);
-      showError(error?.response?.data?.message || "Failed to load users");
-    }
-  };
-
-  const createNotification = async (e) => {
+  const sendNotification = async (e) => {
     e.preventDefault();
 
+    if (!form.title.trim() || !form.message.trim()) {
+      showError("Title and message are required");
+      return;
+    }
+
+    if (form.target_type === "single" && !form.user_id) {
+      showError("Please select a user");
+      return;
+    }
+
     try {
+      setSending(true);
+
       const payload = {
-        title: form.title,
-        message: form.message,
+        title: form.title.trim(),
+        message: form.message.trim(),
         target_type: form.target_type,
+        action_url: form.action_url.trim(),
         notification_type: form.notification_type,
-        action_url: form.action_url,
       };
 
-      if (form.target_type === "single_user") {
+      if (form.target_type === "single") {
         payload.user_id = Number(form.user_id);
       }
 
       await postData("/notifications/", payload);
 
+      showSuccess("Notification sent successfully");
       setForm({
         title: "",
         message: "",
-        target_type: "all_users",
+        target_type: "all",
         user_id: "",
-        notification_type: "general",
         action_url: "",
+        notification_type: "general",
       });
-
-      showSuccess("Notification created successfully");
-      loadNotifications();
+      await loadData();
     } catch (error) {
-      console.error("Failed to create notification", error);
-      showError(error?.response?.data?.message || "Failed to create notification");
+      console.error("Failed to send notification", error);
+      showError(error?.response?.data?.message || "Failed to send notification");
+    } finally {
+      setSending(false);
     }
   };
 
   const markAsRead = async (id) => {
     try {
-      await patchData(`/notifications/${id}/read`);
-      loadNotifications();
+      await putData(`/notifications/${id}/read`, {});
+      showSuccess("Notification marked as read");
+      await loadData();
     } catch (error) {
-      showError(error?.response?.data?.message || "Failed to mark as read");
-    }
-  };
-
-  const markAllAsRead = async () => {
-    try {
-      await patchData("/notifications/read-all");
-      showSuccess("All notifications marked as read");
-      loadNotifications();
-    } catch (error) {
-      showError(error?.response?.data?.message || "Failed to mark all as read");
+      console.error("Failed to mark as read", error);
+      showError(error?.response?.data?.message || "Failed to mark notification as read");
     }
   };
 
   const removeNotification = async (id) => {
+    const ok = window.confirm("Delete this notification?");
+    if (!ok) return;
+
     try {
       await deleteData(`/notifications/${id}`);
-      showSuccess("Notification deleted");
-      loadNotifications();
+      showSuccess("Notification deleted successfully");
+      await loadData();
     } catch (error) {
+      console.error("Failed to delete notification", error);
       showError(error?.response?.data?.message || "Failed to delete notification");
     }
   };
 
   const filteredNotifications = useMemo(() => {
     return notifications.filter((item) => {
-      const targetLabel = item.user_id
-        ? "single user"
-        : item.role_target || "";
+      const text =
+        `${item.title || ""} ${item.message || ""} ${item.target_type || ""} ${item.notification_type || ""}`
+          .toLowerCase();
 
-      const matchesSearch = `${item.title} ${item.message} ${targetLabel} ${item.notification_type || ""}`
-        .toLowerCase()
-        .includes(search.toLowerCase());
+      const matchesSearch = text.includes(search.toLowerCase());
 
       const matchesTarget =
         targetFilter === "all"
           ? true
-          : targetFilter === "single_user"
-          ? Boolean(item.user_id)
-          : String(item.role_target || "").toLowerCase() === targetFilter;
+          : String(item.target_type || "").toLowerCase() === targetFilter.toLowerCase();
 
       return matchesSearch && matchesTarget;
     });
   }, [notifications, search, targetFilter]);
 
-  const totalNotifications = notifications.length;
   const unreadCount = notifications.filter((n) => !n.is_read).length;
-  const singleUserNotifications = notifications.filter((n) => Boolean(n.user_id)).length;
-  const userNotifications = notifications.filter(
-    (n) => !n.user_id && String(n.role_target || "").toLowerCase() === "user"
-  ).length;
-  const adminNotifications = notifications.filter(
-    (n) => !n.user_id && String(n.role_target || "").toLowerCase() === "admin"
-  ).length;
+  const readCount = notifications.filter((n) => n.is_read).length;
 
   return (
     <div className="page-grid">
       <section className="glass-card">
         <div className="hero-strip">
           <div>
-            <h2 className="page-title">Notification System</h2>
+            <h2 className="page-title">Notifications</h2>
             <p className="page-subtitle">
-              Manage individual user notifications, all-user broadcasts, and admin-only alerts.
+              Send, manage, and track user notifications for expenses, bills, complaints, and system updates.
             </p>
           </div>
 
           <div className="hero-kpis">
-            <div className="kpi-pill">Total: {totalNotifications}</div>
             <div className="kpi-pill">Unread: {unreadCount}</div>
-            <div className="kpi-pill">Single User: {singleUserNotifications}</div>
-            <div className="kpi-pill">User Broadcast: {userNotifications}</div>
-            <div className="kpi-pill">Admin Notices: {adminNotifications}</div>
+            <div className="kpi-pill">Read: {readCount}</div>
+            <div className="kpi-pill">Role: {isAdmin ? "Admin" : "User"}</div>
           </div>
         </div>
       </section>
 
       <section className="content-two">
-        {isAdmin && (
-          <form className="glass-card form-grid" onSubmit={createNotification}>
-            <h3 className="section-title">Create Notification</h3>
+        {isAdmin ? (
+          <form className="glass-card form-grid" onSubmit={sendNotification}>
+            <h3 className="section-title">Send Notification</h3>
 
             <input
               className="input"
               placeholder="Notification title"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              required
             />
 
             <textarea
               className="textarea"
-              placeholder="Write the notification message..."
+              placeholder="Notification message..."
               value={form.message}
               onChange={(e) => setForm({ ...form, message: e.target.value })}
-              required
             />
 
             <div className="form-row">
@@ -201,82 +192,92 @@ export default function Notifications() {
                   setForm({
                     ...form,
                     target_type: e.target.value,
-                    user_id: e.target.value === "single_user" ? form.user_id : "",
+                    user_id: e.target.value === "single" ? form.user_id : "",
                   })
                 }
               >
-                <option value="all_users">All Users</option>
-                <option value="single_user">Single User</option>
-                <option value="admin_only">Admin Only</option>
+                <option value="all">All Users</option>
+                <option value="admin">Admin Only</option>
+                <option value="user">Users Only</option>
+                <option value="single">Single User</option>
               </select>
 
-              <select
-                className="select"
-                value={form.notification_type}
-                onChange={(e) =>
-                  setForm({ ...form, notification_type: e.target.value })
-                }
-              >
-                <option value="general">General</option>
-                <option value="bill_generated">Bill Generated</option>
-                <option value="payment_approved">Payment Approved</option>
-                <option value="payment_rejected">Payment Rejected</option>
-                <option value="complaint_resolved">Complaint Resolved</option>
-                <option value="low_stock">Low Stock</option>
-              </select>
+              {form.target_type === "single" ? (
+                <select
+                  className="select"
+                  value={form.user_id}
+                  onChange={(e) => setForm({ ...form, user_id: e.target.value })}
+                >
+                  <option value="">Select user</option>
+                  {users
+                    .filter((u) => u.role === "user")
+                    .map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.full_name} ({u.email})
+                      </option>
+                    ))}
+                </select>
+              ) : (
+                <select
+                  className="select"
+                  value={form.notification_type}
+                  onChange={(e) =>
+                    setForm({ ...form, notification_type: e.target.value })
+                  }
+                >
+                  <option value="general">General</option>
+                  <option value="expense_created">Expense Created</option>
+                  <option value="payment_submitted">Payment Submitted</option>
+                  <option value="payment_approved">Payment Approved</option>
+                  <option value="complaint_reply">Complaint Reply</option>
+                  <option value="bill_generated">Bill Generated</option>
+                </select>
+              )}
             </div>
-
-            {form.target_type === "single_user" && (
-              <select
-                className="select"
-                value={form.user_id}
-                onChange={(e) => setForm({ ...form, user_id: e.target.value })}
-                required
-              >
-                <option value="">Select User</option>
-                {users.map((userItem) => (
-                  <option key={userItem.id} value={userItem.id}>
-                    {userItem.full_name} ({userItem.email})
-                  </option>
-                ))}
-              </select>
-            )}
 
             <input
               className="input"
-              placeholder="Action URL (optional), e.g. /billing"
+              placeholder="Action URL (optional), eg: /billing"
               value={form.action_url}
               onChange={(e) => setForm({ ...form, action_url: e.target.value })}
             />
 
             <div className="button-group">
-              <button className="button button-primary" type="submit">
-                Send Notification
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={sending}
+              >
+                {sending ? "Sending..." : "Send Notification"}
               </button>
             </div>
           </form>
+        ) : (
+          <section className="glass-card">
+            <h3 className="section-title">Your Notifications</h3>
+            <div className="empty-state">
+              View all personal notifications related to your account activity here.
+            </div>
+          </section>
         )}
 
-        <section className="glass-card">
-          <h3 className="section-title">Quick Actions</h3>
+        <section className="glass-card form-grid">
+          <h3 className="section-title">Quick Insights</h3>
 
-          <div className="button-group">
-            <button className="button button-secondary" type="button" onClick={markAllAsRead}>
-              Mark All Read
-            </button>
-          </div>
-
-          <div className="stats-grid" style={{ marginTop: 18 }}>
+          <div className="stats-grid">
             <div className="stat-card">
-              <div className="stat-label">All Notifications</div>
-              <div className="stat-value">{totalNotifications}</div>
-              <div className="stat-trend">Visible to current user</div>
+              <div className="stat-label">Total Notifications</div>
+              <div className="stat-value">{notifications.length}</div>
             </div>
 
             <div className="stat-card">
               <div className="stat-label">Unread</div>
               <div className="stat-value">{unreadCount}</div>
-              <div className="stat-trend">Needs attention</div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-label">Read</div>
+              <div className="stat-value">{readCount}</div>
             </div>
           </div>
         </section>
@@ -298,9 +299,9 @@ export default function Notifications() {
             style={{ maxWidth: 220 }}
           >
             <option value="all">All Targets</option>
-            <option value="single_user">Single User</option>
-            <option value="user">All Users</option>
-            <option value="admin">Admin Only</option>
+            <option value="admin">Admin</option>
+            <option value="user">User</option>
+            <option value="single">Single User</option>
           </select>
         </div>
       </section>
@@ -310,26 +311,41 @@ export default function Notifications() {
 
         {loading ? (
           <div className="empty-state">Loading notifications...</div>
-        ) : filteredNotifications.length ? (
+        ) : !filteredNotifications.length ? (
+          <div className="empty-state">No notifications found.</div>
+        ) : (
           <div className="list-stack">
             {filteredNotifications.map((item) => (
-              <div key={item.id} className="list-item">
+              <div
+                key={item.id}
+                className="list-item"
+                style={{
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: 16,
+                }}
+              >
                 <div style={{ flex: 1 }}>
-                  <strong>{item.title}</strong>
-                  <div className="muted" style={{ marginTop: 6 }}>
+                  <strong style={{ display: "block", marginBottom: 8 }}>
+                    {item.title}
+                  </strong>
+
+                  <div className="muted" style={{ marginBottom: 8 }}>
                     {item.message}
                   </div>
-                  <div className="muted" style={{ marginTop: 8, fontSize: "0.9rem" }}>
-                    {item.created_at || "-"}
+
+                  {/* Main date change here */}
+                  <div className="muted" style={{ marginBottom: 6 }}>
+                    {formatDateTime(item.created_at)}
                   </div>
 
                   {item.action_url && (
-                    <div className="muted" style={{ marginTop: 6 }}>
+                    <div className="muted" style={{ marginBottom: 10 }}>
                       Action: {item.action_url}
                     </div>
                   )}
 
-                  <div className="button-group" style={{ marginTop: 12 }}>
+                  <div className="button-group">
                     {!item.is_read && (
                       <button
                         className="button button-secondary"
@@ -350,20 +366,24 @@ export default function Notifications() {
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gap: 8, justifyItems: "end" }}>
-                  <span
-                    className={`badge ${
-                      item.user_id
-                        ? "badge-warning"
-                        : String(item.role_target || "").toLowerCase() === "admin"
-                        ? "badge-info"
-                        : "badge-success"
-                    }`}
-                  >
-                    {item.user_id ? "Single User" : item.role_target || "all"}
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                    alignItems: "flex-end",
+                    minWidth: 120,
+                  }}
+                >
+                  <span className="badge badge-info">
+                    {item.target_type || "user"}
                   </span>
 
-                  <span className={item.is_read ? "badge badge-success" : "badge badge-warning"}>
+                  <span
+                    className={`badge ${
+                      item.is_read ? "badge-success" : "badge-warning"
+                    }`}
+                  >
                     {item.is_read ? "Read" : "Unread"}
                   </span>
 
@@ -374,8 +394,6 @@ export default function Notifications() {
               </div>
             ))}
           </div>
-        ) : (
-          <div className="empty-state">No notifications found.</div>
         )}
       </section>
     </div>

@@ -1,236 +1,122 @@
 import { useEffect, useState } from "react";
 import { getData } from "../services/api";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import { formatDate } from "../utils/format";
 
 export default function Reports() {
-  const [summary, setSummary] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [summary, setSummary] = useState({});
+  const [recentExpenses, setRecentExpenses] = useState([]);
+  const [recentComplaints, setRecentComplaints] = useState([]);
 
   useEffect(() => {
-    loadSummary();
+    loadData();
   }, []);
 
-  const loadSummary = async () => {
-    try {
-      setLoading(true);
-      const res = await getData("/reports/summary");
-      setSummary(res);
-    } catch (error) {
-      console.error("Failed to load reports", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const loadData = async () => {
+    const res = await getData("/reports/summary");
 
-  const exportPDF = () => {
-    if (!summary) return;
-
-    const doc = new jsPDF();
-
-    doc.setFontSize(18);
-    doc.text("Mess Operations Report", 14, 18);
-
-    doc.setFontSize(11);
-    doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 26);
-
-    autoTable(doc, {
-      startY: 34,
-      head: [["Metric", "Value"]],
-      body: [
-        ["Total Users", summary.total_users ?? 0],
-        ["Total Expense", `₹ ${summary.total_expense ?? 0}`],
-        ["Total Meals", summary.total_attendance ?? 0],
-        ["Meals Today", summary.meals_today ?? 0],
-        ["Pending Complaints", summary.pending_complaints ?? 0],
-        ["Unpaid Bills", summary.unpaid_bills ?? 0],
-        ["Low Stock Items", summary.low_stock_items ?? 0],
-      ],
-    });
-
-    autoTable(doc, {
-      startY: doc.lastAutoTable.finalY + 12,
-      head: [["Recent Expense", "Amount", "Date"]],
-      body: (summary.recent_expenses || []).map((item) => [
-        item.title,
-        `₹ ${item.amount}`,
-        item.expense_date,
-      ]),
-    });
-
-    autoTable(doc, {
-      startY: doc.lastAutoTable.finalY + 12,
-      head: [["Complaint Type", "Message", "Status"]],
-      body: (summary.recent_complaints || []).map((item) => [
-        item.type,
-        item.message,
-        item.status,
-      ]),
-    });
-
-    doc.save("mess-operations-report.pdf");
-  };
-
-  const downloadFile = async (url, filename) => {
-    try {
-      const response = await fetch(`http://127.0.0.1:5000/api${url}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error("Download failed");
-      }
-
-      const blob = await response.blob();
-      const blobUrl = window.URL.createObjectURL(blob);
-
-      const link = document.createElement("a");
-      link.href = blobUrl;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-
-      window.URL.revokeObjectURL(blobUrl);
-    } catch (error) {
-      console.error(error);
-      alert("Failed to download file");
-    }
+    setSummary(res || {});
+    setRecentExpenses(res?.recent_expenses || []);
+    setRecentComplaints(res?.recent_complaints || []);
   };
 
   return (
     <div className="page-grid">
       <section className="glass-card">
-        <div className="hero-strip">
-          <div>
-            <h2 className="page-title">Reports & Analytics</h2>
-            <p className="page-subtitle">
-              View system summary and export PDF or Excel reports for admin records.
-            </p>
-          </div>
+        <h2 className="page-title">Reports</h2>
+        <p className="page-subtitle">
+          View system summary and export reports.
+        </p>
+      </section>
 
-          <div className="button-group">
-            <button className="button button-primary" onClick={exportPDF} type="button">
-              Export PDF
-            </button>
-            <button
-              className="button button-secondary"
-              type="button"
-              onClick={() => downloadFile("/reports/export-attendance", "attendance-report.xlsx")}
-            >
-              Export Attendance Excel
-            </button>
-            <button
-              className="button button-secondary"
-              type="button"
-              onClick={() => downloadFile("/reports/export-expenses", "expense-report.xlsx")}
-            >
-              Export Expense Excel
-            </button>
-            <button
-              className="button button-secondary"
-              type="button"
-              onClick={() => downloadFile("/reports/export-users", "users-report.xlsx")}
-            >
-              Export Users Excel
-            </button>
+      {/* SUMMARY */}
+      <section className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-label">Total Users</div>
+          <div className="stat-value">{summary.total_users || 0}</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-label">Total Expense</div>
+          <div className="stat-value">
+            ₹ {Number(summary.total_expense || 0).toFixed(2)}
           </div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-label">Total Meals</div>
+          <div className="stat-value">{summary.total_attendance || 0}</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-label">Meals Today</div>
+          <div className="stat-value">{summary.meals_today || 0}</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-label">Pending Complaints</div>
+          <div className="stat-value">
+            {summary.pending_complaints || 0}
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-label">Unpaid Bills</div>
+          <div className="stat-value">{summary.unpaid_bills || 0}</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-label">Low Stock Items</div>
+          <div className="stat-value">{summary.low_stock_items || 0}</div>
         </div>
       </section>
 
-      <section className="glass-card">
-        <h3 className="section-title">Monthly Summary</h3>
-
-        {loading ? (
-          <div className="empty-state">Loading reports...</div>
-        ) : summary ? (
-          <div className="stats-grid">
-            <div className="stat-card">
-              <div className="stat-label">Total Users</div>
-              <div className="stat-value">{summary.total_users}</div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-label">Total Expense</div>
-              <div className="stat-value">₹ {summary.total_expense}</div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-label">Total Meals</div>
-              <div className="stat-value">{summary.total_attendance}</div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-label">Meals Today</div>
-              <div className="stat-value">{summary.meals_today}</div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-label">Pending Complaints</div>
-              <div className="stat-value">{summary.pending_complaints}</div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-label">Unpaid Bills</div>
-              <div className="stat-value">{summary.unpaid_bills}</div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-label">Low Stock Items</div>
-              <div className="stat-value">{summary.low_stock_items}</div>
-            </div>
-          </div>
-        ) : (
-          <div className="empty-state">No report data found.</div>
-        )}
-      </section>
-
+      {/* RECENT DATA */}
       <section className="content-two">
+        {/* Recent Expenses */}
         <div className="glass-card">
           <h3 className="section-title">Recent Expenses</h3>
 
-          {summary?.recent_expenses?.length ? (
+          {recentExpenses.length ? (
             <div className="list-stack">
-              {summary.recent_expenses.map((item, index) => (
+              {recentExpenses.map((item, index) => (
                 <div key={index} className="list-item">
                   <div>
                     <strong>{item.title}</strong>
-                    <div className="muted">{item.expense_date}</div>
+
+                    {/* ✅ FIXED DATE FORMAT */}
+                    <div className="muted">
+                      {formatDate(item.expense_date)}
+                    </div>
                   </div>
+
                   <div>
-                    <span className="badge badge-info">₹ {item.amount}</span>
+                    <span className="badge badge-info">
+                      ₹ {Number(item.amount || 0).toFixed(2)}
+                    </span>
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="empty-state">No recent expenses available.</div>
+            <div className="empty-state">No expenses available.</div>
           )}
         </div>
 
+        {/* Recent Complaints */}
         <div className="glass-card">
           <h3 className="section-title">Recent Complaints</h3>
 
-          {summary?.recent_complaints?.length ? (
+          {recentComplaints.length ? (
             <div className="list-stack">
-              {summary.recent_complaints.map((item) => (
+              {recentComplaints.map((item) => (
                 <div key={item.id} className="list-item">
                   <div>
                     <strong>{item.type}</strong>
                     <div className="muted">{item.message}</div>
                   </div>
+
                   <div>
-                    <span
-                      className={`badge ${
-                        item.status === "Resolved"
-                          ? "badge-success"
-                          : item.status === "In Progress"
-                          ? "badge-warning"
-                          : "badge-danger"
-                      }`}
-                    >
+                    <span className="badge badge-info">
                       {item.status}
                     </span>
                   </div>
@@ -238,7 +124,9 @@ export default function Reports() {
               ))}
             </div>
           ) : (
-            <div className="empty-state">No complaints available.</div>
+            <div className="empty-state">
+              No complaints available.
+            </div>
           )}
         </div>
       </section>

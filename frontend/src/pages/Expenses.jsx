@@ -6,6 +6,7 @@ import {
   putData,
 } from "../services/api";
 import { showError, showSuccess } from "../utils/toast";
+import { formatDate } from "../utils/format";
 
 export default function Expenses() {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
@@ -267,14 +268,12 @@ export default function Expenses() {
                   <div className="stat-value">
                     ₹ {Number(item.total_amount || 0).toFixed(2)}
                   </div>
-                  <div className="stat-trend">
-                    {item.count_items || 0} item(s)
-                  </div>
+                  <div className="stat-trend">{item.item_count || 0} item(s)</div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="empty-state">No summary data available.</div>
+            <div className="empty-state">No category summary available.</div>
           )}
         </div>
       </section>
@@ -292,11 +291,11 @@ export default function Expenses() {
             className="select"
             value={monthFilter}
             onChange={(e) => setMonthFilter(e.target.value)}
-            style={{ maxWidth: 150 }}
+            style={{ maxWidth: 160 }}
           >
-            {Array.from({ length: 12 }, (_, i) => (
-              <option key={i + 1} value={String(i + 1)}>
-                Month {i + 1}
+            {Array.from({ length: 12 }, (_, i) => i + 1).map((month) => (
+              <option key={month} value={month}>
+                Month {month}
               </option>
             ))}
           </select>
@@ -307,18 +306,18 @@ export default function Expenses() {
             placeholder="Year"
             value={yearFilter}
             onChange={(e) => setYearFilter(e.target.value)}
-            style={{ maxWidth: 150 }}
+            style={{ maxWidth: 140 }}
           />
 
           <select
             className="select"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            style={{ maxWidth: 190 }}
+            style={{ maxWidth: 180 }}
           >
             <option value="all">All Categories</option>
             {categories.map((c) => (
-              <option key={c.id} value={String(c.id)}>
+              <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
@@ -337,35 +336,30 @@ export default function Expenses() {
       <section className="glass-card">
         <h3 className="section-title">Expense Records</h3>
 
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Category</th>
-                <th>Amount</th>
-                <th>Date</th>
-                {isAdmin && <th>Action</th>}
-              </tr>
-            </thead>
-
-            <tbody>
-              {loading ? (
+        {loading ? (
+          <div className="empty-state">Loading expenses...</div>
+        ) : filteredExpenses.length ? (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
                 <tr>
-                  <td colSpan={isAdmin ? 5 : 4}>
-                    <div className="empty-state">Loading expenses...</div>
-                  </td>
+                  <th>Title</th>
+                  <th>Category</th>
+                  <th>Amount</th>
+                  <th>Date</th>
+                  {isAdmin && <th>Action</th>}
                 </tr>
-              ) : filteredExpenses.length ? (
-                filteredExpenses.map((item) => (
+              </thead>
+
+              <tbody>
+                {filteredExpenses.map((item) => (
                   <tr key={item.id}>
                     <td>
                       <strong>{item.title}</strong>
                     </td>
                     <td>{item.category_name || "-"}</td>
                     <td>₹ {Number(item.amount || 0).toFixed(2)}</td>
-                    <td>{item.expense_date || "-"}</td>
-
+                    <td>{formatDate(item.expense_date)}</td>
                     {isAdmin && (
                       <td>
                         <div className="button-group">
@@ -376,7 +370,6 @@ export default function Expenses() {
                           >
                             Edit
                           </button>
-
                           <button
                             className="button button-danger"
                             type="button"
@@ -388,17 +381,13 @@ export default function Expenses() {
                       </td>
                     )}
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={isAdmin ? 5 : 4}>
-                    <div className="empty-state">No expenses found.</div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-state">No expense records found.</div>
+        )}
       </section>
     </div>
   );

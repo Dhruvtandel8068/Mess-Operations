@@ -20,6 +20,10 @@ def is_admin():
     return get_jwt().get("role") == "admin"
 
 
+def get_current_user_id():
+    return int(get_jwt_identity())
+
+
 @report_bp.route("/summary", methods=["GET"])
 @jwt_required()
 def get_summary():
@@ -27,15 +31,102 @@ def get_summary():
         today = date.today()
         month = int(request.args.get("month", today.month))
         year = int(request.args.get("year", today.year))
+        current_user_id = get_current_user_id()
+        admin = is_admin()
 
-        total_users = User.query.count()
+        # =========================
+        # ADMIN SUMMARY
+        # =========================
+        if admin:
+            total_users = User.query.count()
 
-        total_expense = db.session.query(db.func.sum(Expense.amount)).filter(
-            extract("month", Expense.expense_date) == month,
-            extract("year", Expense.expense_date) == year,
-        ).scalar() or 0
+            total_expense = db.session.query(db.func.sum(Expense.amount)).filter(
+                extract("month", Expense.expense_date) == month,
+                extract("year", Expense.expense_date) == year,
+            ).scalar() or 0
 
+            attendance_rows = Attendance.query.filter(
+                extract("month", Attendance.date) == month,
+                extract("year", Attendance.date) == year,
+            ).all()
+
+            total_meals = 0
+            meals_today = 0
+            breakfast_total = 0
+            lunch_total = 0
+            dinner_total = 0
+
+            for r in attendance_rows:
+                breakfast_total += int(bool(r.breakfast))
+                lunch_total += int(bool(r.lunch))
+                dinner_total += int(bool(r.dinner))
+
+                count = int(bool(r.breakfast)) + int(bool(r.lunch)) + int(bool(r.dinner))
+                total_meals += count
+                if str(r.date) == str(today):
+                    meals_today += count
+
+            pending_complaints = Complaint.query.filter(
+                Complaint.status.in_(["Open", "In Progress", "Pending"])
+            ).count()
+
+            unpaid_bills = Bill.query.filter(Bill.status == "Unpaid").count()
+            pending_approval_bills = Bill.query.filter(Bill.status == "Pending Approval").count()
+            paid_bills = Bill.query.filter(Bill.status == "Paid").count()
+
+            recent_expenses = Expense.query.order_by(Expense.expense_date.desc()).limit(5).all()
+            recent_attendance = Attendance.query.order_by(Attendance.date.desc()).limit(5).all()
+            recent_complaints = Complaint.query.order_by(Complaint.created_at.desc()).limit(5).all()
+
+            return jsonify({
+                "role": "admin",
+                "total_users": total_users,
+                "total_expense": float(total_expense),
+                "total_attendance": total_meals,
+                "meals_today": meals_today,
+                "pending_complaints": pending_complaints,
+                "unpaid_bills": unpaid_bills,
+                "pending_approval_bills": pending_approval_bills,
+                "paid_bills": paid_bills,
+                "low_stock_items": 0,
+                "meal_breakdown": {
+                    "breakfast": breakfast_total,
+                    "lunch": lunch_total,
+                    "dinner": dinner_total,
+                },
+                "recent_expenses": [
+                    {
+                        "title": e.title,
+                        "amount": float(e.amount),
+                        "expense_date": str(e.expense_date)
+                    } for e in recent_expenses
+                ],
+                "recent_attendance": [
+                    {
+                        "user_id": a.user_id,
+                        "date": str(a.date),
+                        "breakfast": a.breakfast,
+                        "lunch": a.lunch,
+                        "dinner": a.dinner
+                    } for a in recent_attendance
+                ],
+                "recent_complaints": [
+                    {
+                        "id": c.id,
+                        "type": c.complaint_type,
+                        "message": c.message,
+                        "status": c.status,
+                        "priority": getattr(c, "priority", "Medium"),
+                        "created_at": str(c.created_at) if c.created_at else None
+                    } for c in recent_complaints
+                ]
+            }), 200
+
+        # =========================
+        # USER SUMMARY (ONLY OWN DATA)
+        # =========================
         attendance_rows = Attendance.query.filter(
+            Attendance.user_id == current_user_id,
             extract("month", Attendance.date) == month,
             extract("year", Attendance.date) == year,
         ).all()
@@ -57,20 +148,37 @@ def get_summary():
                 meals_today += count
 
         pending_complaints = Complaint.query.filter(
+            Complaint.user_id == current_user_id,
             Complaint.status.in_(["Open", "In Progress", "Pending"])
         ).count()
 
-        unpaid_bills = Bill.query.filter(Bill.status == "Unpaid").count()
-        pending_approval_bills = Bill.query.filter(Bill.status == "Pending Approval").count()
-        paid_bills = Bill.query.filter(Bill.status == "Paid").count()
+        unpaid_bills = Bill.query.filter(
+            Bill.user_id == current_user_id,
+            Bill.status == "Unpaid"
+        ).count()
 
-        recent_expenses = Expense.query.order_by(Expense.expense_date.desc()).limit(5).all()
-        recent_attendance = Attendance.query.order_by(Attendance.date.desc()).limit(5).all()
-        recent_complaints = Complaint.query.order_by(Complaint.created_at.desc()).limit(5).all()
+        pending_approval_bills = Bill.query.filter(
+            Bill.user_id == current_user_id,
+            Bill.status == "Pending Approval"
+        ).count()
+
+        paid_bills = Bill.query.filter(
+            Bill.user_id == current_user_id,
+            Bill.status == "Paid"
+        ).count()
+
+        recent_complaints = Complaint.query.filter(
+            Complaint.user_id == current_user_id
+        ).order_by(Complaint.created_at.desc()).limit(5).all()
+
+        recent_bills = Bill.query.filter(
+            Bill.user_id == current_user_id
+        ).order_by(Bill.created_at.desc()).limit(5).all()
 
         return jsonify({
-            "total_users": total_users,
-            "total_expense": float(total_expense),
+            "role": "user",
+            "total_users": 0,
+            "total_expense": 0,
             "total_attendance": total_meals,
             "meals_today": meals_today,
             "pending_complaints": pending_complaints,
@@ -83,13 +191,7 @@ def get_summary():
                 "lunch": lunch_total,
                 "dinner": dinner_total,
             },
-            "recent_expenses": [
-                {
-                    "title": e.title,
-                    "amount": float(e.amount),
-                    "expense_date": str(e.expense_date)
-                } for e in recent_expenses
-            ],
+            "recent_expenses": [],
             "recent_attendance": [
                 {
                     "user_id": a.user_id,
@@ -97,7 +199,7 @@ def get_summary():
                     "breakfast": a.breakfast,
                     "lunch": a.lunch,
                     "dinner": a.dinner
-                } for a in recent_attendance
+                } for a in sorted(attendance_rows, key=lambda x: x.date, reverse=True)[:5]
             ],
             "recent_complaints": [
                 {
@@ -108,6 +210,17 @@ def get_summary():
                     "priority": getattr(c, "priority", "Medium"),
                     "created_at": str(c.created_at) if c.created_at else None
                 } for c in recent_complaints
+            ],
+            "recent_bills": [
+                {
+                    "bill_id": b.id,
+                    "period": b.period,
+                    "total_amount": float(b.total_amount or 0),
+                    "status": b.status,
+                    "month": b.month,
+                    "year": b.year,
+                    "created_at": str(b.created_at) if b.created_at else None
+                } for b in recent_bills
             ]
         }), 200
 
@@ -238,6 +351,9 @@ def export_users_excel():
 @jwt_required()
 def expense_chart():
     try:
+        if not is_admin():
+            return jsonify([]), 200
+
         month = int(request.args.get("month", date.today().month))
         year = int(request.args.get("year", date.today().year))
 
@@ -262,10 +378,17 @@ def expense_chart():
 @jwt_required()
 def complaint_chart():
     try:
-        rows = db.session.query(
+        current_user_id = get_current_user_id()
+
+        query = db.session.query(
             Complaint.status,
             db.func.count(Complaint.id)
-        ).group_by(Complaint.status).all()
+        )
+
+        if not is_admin():
+            query = query.filter(Complaint.user_id == current_user_id)
+
+        rows = query.group_by(Complaint.status).all()
 
         return jsonify([
             {"label": row[0], "value": int(row[1])}
@@ -282,8 +405,12 @@ def billing_chart():
     try:
         month = request.args.get("month")
         year = request.args.get("year")
+        current_user_id = get_current_user_id()
 
         query = db.session.query(Bill.status, db.func.count(Bill.id))
+
+        if not is_admin():
+            query = query.filter(Bill.user_id == current_user_id)
 
         if month:
             query = query.filter(Bill.month == int(month))
@@ -307,11 +434,17 @@ def attendance_chart():
     try:
         month = int(request.args.get("month", date.today().month))
         year = int(request.args.get("year", date.today().year))
+        current_user_id = get_current_user_id()
 
-        rows = Attendance.query.filter(
+        query = Attendance.query.filter(
             extract("month", Attendance.date) == month,
             extract("year", Attendance.date) == year,
-        ).all()
+        )
+
+        if not is_admin():
+            query = query.filter(Attendance.user_id == current_user_id)
+
+        rows = query.all()
 
         breakfast = sum(int(bool(r.breakfast)) for r in rows)
         lunch = sum(int(bool(r.lunch)) for r in rows)

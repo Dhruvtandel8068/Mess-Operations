@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getData, postData, putData, deleteData } from "../services/api";
+import { formatDate } from "../utils/format";
 
 export default function Menu() {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
@@ -274,7 +275,7 @@ export default function Menu() {
             <tbody>
               {filteredItems.map((row) => (
                 <tr key={row.id}>
-                  <td>{row.meal_date}</td>
+                  <td>{formatDate(row.meal_date)}</td>
                   <td>
                     <span className="badge badge-info">{row.meal_type}</span>
                   </td>
@@ -296,12 +297,14 @@ export default function Menu() {
                       <div className="button-group">
                         <button
                           className="button button-secondary"
+                          type="button"
                           onClick={() => handleEdit(row)}
                         >
                           Edit
                         </button>
                         <button
                           className="button button-danger"
+                          type="button"
                           onClick={() => handleDelete(row.id)}
                         >
                           Delete

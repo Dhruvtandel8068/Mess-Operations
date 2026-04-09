@@ -29,7 +29,7 @@ def user_to_dict(user):
     }
     data["role_badge"] = "Admin" if data.get("role") == "admin" else "User"
     data["created_date_formatted"] = (
-        getattr(user, "created_at").strftime("%d %b %Y, %I:%M %p")
+        str(getattr(user, "created_at"))
         if getattr(user, "created_at", None)
         else None
     )
@@ -199,9 +199,7 @@ def get_attendance():
     year = request.args.get("year")
 
     query = Attendance.query
-    if is_admin():
-        pass
-    else:
+    if not is_admin():
         query = query.filter_by(user_id=user_id)
 
     if month:
@@ -213,6 +211,36 @@ def get_attendance():
     return jsonify([attendance_to_dict(r) for r in rows]), 200
 
 
+@user_bp.route("/attendance/check", methods=["GET"])
+@jwt_required()
+def check_attendance():
+    user_id = request.args.get("user_id")
+    date_value = request.args.get("date")
+
+    if not date_value:
+        return jsonify({"message": "date is required"}), 400
+
+    if is_admin():
+        if not user_id:
+            return jsonify({"message": "user_id is required for admin"}), 400
+        user_id = int(user_id)
+    else:
+        user_id = int(get_jwt_identity())
+
+    row = Attendance.query.filter_by(user_id=user_id, date=date_value).first()
+
+    if not row:
+        return jsonify({
+            "exists": False,
+            "attendance": None
+        }), 200
+
+    return jsonify({
+        "exists": True,
+        "attendance": attendance_to_dict(row)
+    }), 200
+
+
 @user_bp.route("/attendance", methods=["POST"])
 @jwt_required()
 def create_or_update_attendance():
@@ -220,32 +248,59 @@ def create_or_update_attendance():
     date_value = data.get("date")
     user_id = data.get("user_id")
 
+    new_breakfast = bool(data.get("breakfast"))
+    new_lunch = bool(data.get("lunch"))
+    new_dinner = bool(data.get("dinner"))
+
     if is_admin():
         if not user_id:
             return jsonify({"message": "user_id is required for admin"}), 400
+        user_id = int(user_id)
     else:
         user_id = int(get_jwt_identity())
 
     if not date_value:
         return jsonify({"message": "date is required"}), 400
 
+    if not new_breakfast and not new_lunch and not new_dinner:
+        return jsonify({"message": "Select at least one meal"}), 400
+
     row = Attendance.query.filter_by(user_id=user_id, date=date_value).first()
+
     if not row:
         row = Attendance(
             user_id=user_id,
             date=date_value,
-            breakfast=bool(data.get("breakfast")),
-            lunch=bool(data.get("lunch")),
-            dinner=bool(data.get("dinner")),
+            breakfast=new_breakfast,
+            lunch=new_lunch,
+            dinner=new_dinner,
         )
         db.session.add(row)
-    else:
-        row.breakfast = bool(data.get("breakfast"))
-        row.lunch = bool(data.get("lunch"))
-        row.dinner = bool(data.get("dinner"))
+        db.session.commit()
+        return jsonify({
+            "message": "Attendance created successfully",
+            "attendance": attendance_to_dict(row)
+        }), 201
+
+    already_breakfast = bool(row.breakfast)
+    already_lunch = bool(row.lunch)
+    already_dinner = bool(row.dinner)
+
+    if (new_breakfast and already_breakfast) or (new_lunch and already_lunch) or (new_dinner and already_dinner):
+        return jsonify({
+            "message": "Selected meal attendance already marked",
+            "attendance": attendance_to_dict(row)
+        }), 409
+
+    row.breakfast = already_breakfast or new_breakfast
+    row.lunch = already_lunch or new_lunch
+    row.dinner = already_dinner or new_dinner
 
     db.session.commit()
-    return jsonify({"message": "Attendance saved successfully", "attendance": attendance_to_dict(row)}), 200
+    return jsonify({
+        "message": "Attendance updated successfully",
+        "attendance": attendance_to_dict(row)
+    }), 200
 
 
 @user_bp.route("/attendance/<int:attendance_id>", methods=["DELETE"])
